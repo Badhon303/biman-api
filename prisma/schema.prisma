@@ -1,0 +1,482 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN @map("Super Admin")
+  MANAGER     @map("Manager")
+  ENGINEER    @map("Engineer")
+  BIMAN_ADMIN @map("Biman Admin")
+}
+
+enum Organization {
+  NGGL
+  BIMAN @map("Biman")
+}
+
+enum UserStatus {
+  ACTIVE   @map("Active")
+  INACTIVE @map("Inactive")
+}
+
+enum EquipmentStatus {
+  AVAILABLE         @map("Available")
+  UNDER_MAINTENANCE @map("Under Maintenance")
+  OUT_OF_SERVICE    @map("Out of Service")
+  INACTIVE          @map("Inactive")
+}
+
+enum ServiceKind {
+  F_SERVICE @map("F-Service")
+  B_SERVICE @map("B-Service")
+  C_SERVICE @map("C-Service")
+  D_SERVICE @map("D-Service")
+  E_SERVICE @map("E-Service")
+  V_SERVICE @map("V-Service")
+  OTHERS    @map("Others")
+}
+
+enum TicketType {
+  F_SERVICE @map("F-Service")
+  B_SERVICE @map("B-Service")
+  C_SERVICE @map("C-Service")
+  D_SERVICE @map("D-Service")
+  E_SERVICE @map("E-Service")
+  V_SERVICE @map("V-Service")
+  OTHERS    @map("Others")
+  BREAKDOWN @map("Breakdown")
+  GENERAL   @map("General")
+  WASHING   @map("Washing")
+}
+
+enum TicketStatus {
+  OPEN                  @map("Open")
+  ASSIGNED              @map("Assigned")
+  IN_PROGRESS           @map("In Progress")
+  AWAITING_PARTS        @map("Awaiting Parts")
+  AWAITING_VERIFICATION @map("Awaiting Verification")
+  COMPLETED             @map("Completed")
+  CLOSED                @map("Closed")
+}
+
+enum TicketPriority {
+  LOW      @map("Low")
+  MEDIUM   @map("Medium")
+  HIGH     @map("High")
+  CRITICAL @map("Critical")
+}
+
+enum RequestStatus {
+  PENDING  @map("Pending")
+  APPROVED @map("Approved")
+  REJECTED @map("Rejected")
+  RECEIVED @map("Received")
+}
+
+enum ScheduleStatus {
+  SCHEDULED @map("Scheduled")
+  DUE_SOON  @map("Due soon")
+  OVERDUE   @map("Overdue")
+}
+
+enum FilePurpose {
+  EQUIPMENT_PHOTO
+  WORK_IMAGE
+  FEEDBACK_IMAGE
+  EQUIPMENT_DOCUMENT
+}
+
+enum FileStatus {
+  PENDING
+  ATTACHED
+}
+
+enum PhotoSlot {
+  PRIMARY
+  FRONT
+  SIDE
+  OTHER
+}
+
+model User {
+  id                     String             @id @default(uuid()) @db.Uuid
+  name                   String
+  email                  String             @unique
+  passwordHash           String             @map("password_hash")
+  role                   Role
+  organization           Organization
+  status                 UserStatus         @default(ACTIVE)
+  mustChangePassword     Boolean            @default(true) @map("must_change_password")
+  deletedAt              DateTime?          @map("deleted_at")
+  createdAt              DateTime           @default(now()) @map("created_at")
+  updatedAt              DateTime           @updatedAt @map("updated_at")
+  refreshTokens          RefreshToken[]
+  createdTickets         Ticket[]           @relation("TicketCreator")
+  assignedTickets        Ticket[]           @relation("TicketAssignee")
+  hourMeterReadings      HourMeterReading[]
+  ticketHistory          TicketHistory[]
+  feedbackEntries        TicketFeedback[]
+  serviceChecksTriggered ServiceCheck[]     @relation("ServiceCheckActor")
+  requestedParts         EquipmentRequest[] @relation("RequestCreator")
+  approvedRequests       EquipmentRequest[] @relation("RequestApprover")
+  notifications          AppNotification[]
+  uploadedAssets         FileAsset[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  userId    String    @map("user_id") @db.Uuid
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("refresh_tokens")
+}
+
+model EquipmentType {
+  id        String                 @id @default(uuid()) @db.Uuid
+  name      String                 @unique
+  deletedAt DateTime?              @map("deleted_at")
+  createdAt DateTime               @default(now()) @map("created_at")
+  updatedAt DateTime               @updatedAt @map("updated_at")
+  services  EquipmentTypeService[]
+  equipment Equipment[]
+
+  @@map("equipment_types")
+}
+
+model EquipmentTypeService {
+  id              String                  @id @default(uuid()) @db.Uuid
+  equipmentTypeId String                  @map("equipment_type_id") @db.Uuid
+  name            String
+  kind            ServiceKind
+  minHours        Float?                  @map("min_hours")
+  maxHours        Float?                  @map("max_hours")
+  months          Int?
+  sortOrder       Int                     @default(0) @map("sort_order")
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
+  equipmentType   EquipmentType           @relation(fields: [equipmentTypeId], references: [id], onDelete: Cascade)
+  tickets         Ticket[]
+  checklistItems  ChecklistTemplateItem[]
+  serviceChecks   ServiceCheck[]
+
+  @@index([equipmentTypeId, sortOrder])
+  @@map("equipment_type_services")
+}
+
+model Equipment {
+  id                 String                   @id @default(uuid()) @db.Uuid
+  assetNo            String                   @unique @map("asset_no")
+  equipmentTypeId    String                   @map("equipment_type_id") @db.Uuid
+  manufacturer       String
+  model              String
+  engineModel        String?                  @map("engine_model")
+  engineSerialNo     String?                  @map("engine_serial_no")
+  bimanSerialNo      String?                  @map("biman_serial_no")
+  tldSerialNo        String?                  @map("tld_serial_no")
+  location           String
+  status             EquipmentStatus          @default(AVAILABLE)
+  hourMeter          Float                    @default(0) @map("hour_meter")
+  lastServiceCheckAt DateTime?                @map("last_service_check_at")
+  actualGtDate       DateTime?                @map("actual_gt_date")
+  shipDate           DateTime?                @map("ship_date")
+  shippingStatus     String?                  @map("shipping_status")
+  emissionRating     String?                  @map("emission_rating")
+  deletedAt          DateTime?                @map("deleted_at")
+  createdAt          DateTime                 @default(now()) @map("created_at")
+  updatedAt          DateTime                 @updatedAt @map("updated_at")
+  equipmentType      EquipmentType            @relation(fields: [equipmentTypeId], references: [id], onDelete: Restrict)
+  specifications     EquipmentSpecification[]
+  photos             EquipmentPhoto[]
+  documents          EquipmentDocument[]
+  hourMeterReadings  HourMeterReading[]
+  tickets            Ticket[]
+  requests           EquipmentRequest[]
+  schedules          MaintenanceSchedule[]
+  serviceChecks      ServiceCheck[]
+
+  @@index([equipmentTypeId, status])
+  @@map("equipment")
+}
+
+model EquipmentSpecification {
+  id          String    @id @default(uuid()) @db.Uuid
+  equipmentId String    @map("equipment_id") @db.Uuid
+  label       String
+  value       String
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+
+  @@map("equipment_specifications")
+}
+
+model EquipmentPhoto {
+  id          String    @id @default(uuid()) @db.Uuid
+  equipmentId String    @map("equipment_id") @db.Uuid
+  fileAssetId String    @unique @map("file_asset_id") @db.Uuid
+  slot        PhotoSlot @default(OTHER)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  fileAsset   FileAsset @relation(fields: [fileAssetId], references: [id], onDelete: Restrict)
+
+  @@map("equipment_photos")
+}
+
+model EquipmentDocument {
+  id          String    @id @default(uuid()) @db.Uuid
+  equipmentId String    @map("equipment_id") @db.Uuid
+  fileAssetId String    @unique @map("file_asset_id") @db.Uuid
+  name        String
+  type        String
+  expiryDate  DateTime? @map("expiry_date")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  fileAsset   FileAsset @relation(fields: [fileAssetId], references: [id], onDelete: Restrict)
+
+  @@map("equipment_documents")
+}
+
+model HourMeterReading {
+  id               String    @id @default(uuid()) @db.Uuid
+  equipmentId      String    @map("equipment_id") @db.Uuid
+  value            Float
+  recordedAt       DateTime  @default(now()) @map("recorded_at")
+  recordedByUserId String    @map("recorded_by_user_id") @db.Uuid
+  equipment        Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  recordedBy       User      @relation(fields: [recordedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([equipmentId, recordedAt])
+  @@map("hour_meter_readings")
+}
+
+model ServiceCheck {
+  id                     String               @id @default(uuid()) @db.Uuid
+  equipmentId            String               @map("equipment_id") @db.Uuid
+  equipmentTypeServiceId String               @map("equipment_type_service_id") @db.Uuid
+  thresholdHours         Float                @map("threshold_hours")
+  ticketId               String?              @unique @map("ticket_id") @db.Uuid
+  triggeredByUserId      String               @map("triggered_by_user_id") @db.Uuid
+  previousValue          Float                @map("previous_value")
+  currentValue           Float                @map("current_value")
+  createdAt              DateTime             @default(now()) @map("created_at")
+  equipment              Equipment            @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  service                EquipmentTypeService @relation(fields: [equipmentTypeServiceId], references: [id], onDelete: Restrict)
+  ticket                 Ticket?              @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  triggeredBy            User                 @relation("ServiceCheckActor", fields: [triggeredByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([equipmentId, equipmentTypeServiceId, thresholdHours])
+  @@map("service_checks")
+}
+
+model ChecklistTemplateItem {
+  id                     String                @id @default(uuid()) @db.Uuid
+  serviceType            ServiceKind           @map("service_type")
+  equipmentTypeServiceId String?               @map("equipment_type_service_id") @db.Uuid
+  category               String
+  label                  String
+  sortOrder              Int                   @default(0) @map("sort_order")
+  equipmentTypeService   EquipmentTypeService? @relation(fields: [equipmentTypeServiceId], references: [id], onDelete: Cascade)
+
+  @@index([serviceType, equipmentTypeServiceId, sortOrder])
+  @@map("checklist_template_items")
+}
+
+model Ticket {
+  id                 String                @id @default(uuid()) @db.Uuid
+  ticketNo           String                @unique @map("ticket_no")
+  serviceType        TicketType            @map("service_type")
+  pmServiceId        String?               @map("pm_service_id") @db.Uuid
+  equipmentId        String                @map("equipment_id") @db.Uuid
+  faultDescription   String?               @map("fault_description")
+  priority           TicketPriority        @default(MEDIUM)
+  status             TicketStatus          @default(OPEN)
+  dueDate            DateTime              @map("due_date")
+  createdByUserId    String                @map("created_by_user_id") @db.Uuid
+  assignedEngineerId String?               @map("assigned_engineer_id") @db.Uuid
+  requestingParty    String?               @map("requesting_party")
+  closedDate         DateTime?             @map("closed_date")
+  downtimeHours      Float?                @map("downtime_hours")
+  createdAt          DateTime              @default(now()) @map("created_at")
+  updatedAt          DateTime              @updatedAt @map("updated_at")
+  equipment          Equipment             @relation(fields: [equipmentId], references: [id], onDelete: Restrict)
+  pmService          EquipmentTypeService? @relation(fields: [pmServiceId], references: [id], onDelete: Restrict)
+  createdBy          User                  @relation("TicketCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  assignedEngineer   User?                 @relation("TicketAssignee", fields: [assignedEngineerId], references: [id], onDelete: Restrict)
+  maintenanceRecord  MaintenanceRecord?
+  history            TicketHistory[]
+  feedback           TicketFeedback[]
+  requests           EquipmentRequest[]
+  schedule           MaintenanceSchedule?
+  serviceCheck       ServiceCheck?
+
+  @@index([status, dueDate])
+  @@index([equipmentId, createdAt])
+  @@map("tickets")
+}
+
+model MaintenanceRecord {
+  id                   String          @id @default(uuid()) @db.Uuid
+  ticketId             String          @unique @map("ticket_id") @db.Uuid
+  problemDescription   String?         @map("problem_description")
+  partsUsed            String?         @map("parts_used") @db.Text
+  labourHours          Float           @default(0) @map("labour_hours")
+  functionalTestPassed Boolean?        @map("functional_test_passed")
+  safetyCheckPassed    Boolean?        @map("safety_check_passed")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
+  ticket               Ticket          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  checklistItems       ChecklistItem[]
+  workImages           WorkImage[]
+
+  @@map("maintenance_records")
+}
+
+model ChecklistItem {
+  id                  String            @id @default(uuid()) @db.Uuid
+  maintenanceRecordId String            @map("maintenance_record_id") @db.Uuid
+  category            String
+  label               String
+  checked             Boolean           @default(false)
+  sortOrder           Int               @default(0) @map("sort_order")
+  maintenanceRecord   MaintenanceRecord @relation(fields: [maintenanceRecordId], references: [id], onDelete: Cascade)
+
+  @@map("checklist_items")
+}
+
+model WorkImage {
+  id                  String            @id @default(uuid()) @db.Uuid
+  maintenanceRecordId String            @map("maintenance_record_id") @db.Uuid
+  fileAssetId         String            @unique @map("file_asset_id") @db.Uuid
+  maintenanceRecord   MaintenanceRecord @relation(fields: [maintenanceRecordId], references: [id], onDelete: Cascade)
+  fileAsset           FileAsset         @relation(fields: [fileAssetId], references: [id], onDelete: Restrict)
+
+  @@map("work_images")
+}
+
+model TicketHistory {
+  id        String   @id @default(uuid()) @db.Uuid
+  ticketId  String   @map("ticket_id") @db.Uuid
+  actorId   String   @map("actor_user_id") @db.Uuid
+  label     String
+  createdAt DateTime @default(now()) @map("created_at")
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor     User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_history")
+}
+
+model TicketFeedback {
+  id           String          @id @default(uuid()) @db.Uuid
+  ticketId     String          @map("ticket_id") @db.Uuid
+  authorUserId String          @map("author_user_id") @db.Uuid
+  bodyHtml     String          @map("body_html") @db.Text
+  createdAt    DateTime        @default(now()) @map("created_at")
+  ticket       Ticket          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author       User            @relation(fields: [authorUserId], references: [id], onDelete: Restrict)
+  images       FeedbackImage[]
+
+  @@map("ticket_feedback")
+}
+
+model FeedbackImage {
+  id          String         @id @default(uuid()) @db.Uuid
+  feedbackId  String         @map("feedback_id") @db.Uuid
+  fileAssetId String         @unique @map("file_asset_id") @db.Uuid
+  feedback    TicketFeedback @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  fileAsset   FileAsset      @relation(fields: [fileAssetId], references: [id], onDelete: Restrict)
+
+  @@map("feedback_images")
+}
+
+model EquipmentRequest {
+  id            String        @id @default(uuid()) @db.Uuid
+  requestNo     String        @unique @map("request_no")
+  ticketId      String        @map("ticket_id") @db.Uuid
+  equipmentId   String        @map("equipment_id") @db.Uuid
+  item          String
+  quantity      Int
+  reason        String        @db.Text
+  status        RequestStatus @default(PENDING)
+  requestedById String        @map("requested_by_user_id") @db.Uuid
+  approvedById  String?       @map("approved_by_user_id") @db.Uuid
+  approvedAt    DateTime?     @map("approved_at")
+  receivedAt    DateTime?     @map("received_at")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  ticket        Ticket        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  equipment     Equipment     @relation(fields: [equipmentId], references: [id], onDelete: Restrict)
+  requestedBy   User          @relation("RequestCreator", fields: [requestedById], references: [id], onDelete: Restrict)
+  approvedBy    User?         @relation("RequestApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@map("equipment_requests")
+}
+
+model MaintenanceSchedule {
+  id          String         @id @default(uuid()) @db.Uuid
+  scheduleNo  String         @unique @map("schedule_no")
+  equipmentId String         @map("equipment_id") @db.Uuid
+  lastDate    DateTime       @map("last_date")
+  dueDate     DateTime       @map("due_date")
+  status      ScheduleStatus @default(SCHEDULED)
+  ticketId    String?        @unique @map("ticket_id") @db.Uuid
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+  equipment   Equipment      @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  ticket      Ticket?        @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+
+  @@index([dueDate, status])
+  @@map("maintenance_schedules")
+}
+
+model AppNotification {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  type      String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read, createdAt])
+  @@map("app_notifications")
+}
+
+model FileAsset {
+  id                    String             @id @default(uuid()) @db.Uuid
+  relativePath          String             @map("relative_path")
+  thumbnailRelativePath String?            @map("thumbnail_relative_path")
+  purpose               FilePurpose
+  mimeType              String             @map("mime_type")
+  sizeBytes             Int                @map("size_bytes")
+  thumbnailSizeBytes    Int?               @map("thumbnail_size_bytes")
+  originalSizeBytes     Int                @map("original_size_bytes")
+  width                 Int?
+  height                Int?
+  sha256                String
+  status                FileStatus         @default(PENDING)
+  uploadedByUserId      String             @map("uploaded_by_user_id") @db.Uuid
+  createdAt             DateTime           @default(now()) @map("created_at")
+  attachedAt            DateTime?          @map("attached_at")
+  deletedAt             DateTime?          @map("deleted_at")
+  uploadedBy            User               @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+  equipmentPhoto        EquipmentPhoto?
+  equipmentDocument     EquipmentDocument?
+  workImage             WorkImage?
+  feedbackImage         FeedbackImage?
+
+  @@index([status, createdAt])
+  @@map("file_assets")
+}
