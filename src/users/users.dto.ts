@@ -8,6 +8,11 @@ import {
 import { AppRole } from '../common/roles.decorator';
 
 const roles: AppRole[] = ['Super Admin', 'Manager', 'Engineer', 'Biman Admin'];
+const creatableRoles: Exclude<AppRole, 'Super Admin'>[] = [
+  'Manager',
+  'Engineer',
+  'Biman Admin',
+];
 
 export class CreateUserDto {
   @IsString()
@@ -17,8 +22,8 @@ export class CreateUserDto {
   @IsEmail()
   email: string;
 
-  @IsIn(roles)
-  role: AppRole;
+  @IsIn(creatableRoles)
+  role: Exclude<AppRole, 'Super Admin'>;
 
   @IsOptional()
   @IsIn(['NGGL', 'Biman'])
@@ -26,8 +31,19 @@ export class CreateUserDto {
 
   @IsOptional()
   @IsString()
-  @MinLength(12)
+  @MinLength(6)
   temporaryPassword?: string;
+}
+
+export class SetUserPasswordDto {
+  @IsString()
+  @MinLength(6)
+  newPassword: string;
+}
+
+export class UpdateUserStatusDto {
+  @IsIn(['Active', 'Inactive'])
+  status: 'Active' | 'Inactive';
 }
 
 export class UpdateUserDto {

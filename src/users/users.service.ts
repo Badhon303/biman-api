@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -8,6 +9,7 @@ import { randomBytes } from 'node:crypto';
 import { hash } from 'bcryptjs';
 import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuthUser } from '../common/current-user.decorator';
 import { organizationToDb, roleFromDb, roleToDb } from '../common/enum-mappers';
 import { PaginationDto } from '../common/pagination.dto';
 import { CreateUserDto, UpdateUserDto } from './users.dto';
@@ -120,6 +122,39 @@ export class UsersService {
     return { ...this.serialize(user), temporaryPassword };
   }
 
+  async updateStatus(
+    id: string,
+    status: 'Active' | 'Inactive',
+    actor: AuthUser,
+  ) {
+    const existing = await this.prisma.user.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!existing) throw new NotFoundException('User not found.');
+    if (actor.role === 'Manager' && existing.role === Role.SUPER_ADMIN) {
+      throw new ForbiddenException(
+        'Managers cannot change a Super Admin status.',
+      );
+    }
+    const user = await this.prisma.user.update({
+      where: { id },
+      data: {
+        status: status === 'Active' ? 'ACTIVE' : 'INACTIVE',
+        ...(status === 'Inactive'
+          ? {
+              refreshTokens: {
+                updateMany: {
+                  where: { revokedAt: null },
+                  data: { revokedAt: new Date() },
+                },
+              },
+            }
+          : {}),
+      },
+    });
+    return this.serialize(user);
+  }
+
   async update(id: string, dto: UpdateUserDto) {
     const existing = await this.prisma.user.findFirst({
       where: { id, deletedAt: null },
@@ -172,6 +207,55 @@ export class UsersService {
     });
     if (!user) throw new NotFoundException('User not found.');
     return this.serialize(user);
+  }
+
+  async remove(id: string) {
+    const user = await this.prisma.user.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!user) throw new NotFoundException('User not found.');
+    const deletedAt = new Date();
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id },
+        data: { deletedAt, status: 'INACTIVE' },
+      }),
+      this.prisma.refreshToken.updateMany({
+        where: { userId: id, revokedAt: null },
+        data: { revokedAt: deletedAt },
+      }),
+    ]);
+    return { success: true };
+  }
+
+  async setPassword(id: string, newPassword: string) {
+    const user = await this.prisma.user.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!user) throw new NotFoundException('User not found.');
+    const [, , notification] = await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id },
+        data: {
+          passwordHash: await hash(newPassword, 12),
+          mustChangePassword: true,
+        },
+      }),
+      this.prisma.refreshToken.updateMany({
+        where: { userId: id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+      this.prisma.appNotification.create({
+        data: {
+          userId: id,
+          type: 'Password reset',
+          message:
+            'Your password was reset by an administrator. Change it after signing in.',
+        },
+      }),
+    ]);
+    await this.notificationPublisher.dispatch([notification]);
+    return { success: true };
   }
 
   async resetPassword(id: string) {

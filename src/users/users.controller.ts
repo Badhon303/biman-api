@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -14,7 +15,12 @@ import { AllowPasswordChange } from '../common/public.decorator';
 import { PaginationDto } from '../common/pagination.dto';
 import { AuthService } from '../auth/auth.service';
 import { ChangePasswordDto } from '../auth/auth.dto';
-import { CreateUserDto, UpdateUserDto } from './users.dto';
+import {
+  CreateUserDto,
+  SetUserPasswordDto,
+  UpdateUserDto,
+  UpdateUserStatusDto,
+} from './users.dto';
 import { UsersService } from './users.service';
 
 @ApiTags('users')
@@ -42,7 +48,7 @@ export class UsersController {
   }
 
   @Get()
-  @Roles('Super Admin')
+  @Roles('Super Admin', 'Manager')
   list(@Query() query: PaginationDto) {
     return this.users.list(query);
   }
@@ -65,10 +71,32 @@ export class UsersController {
     return this.users.get(id);
   }
 
+  @Patch(':id/status')
+  @Roles('Super Admin', 'Manager')
+  updateStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateUserStatusDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.users.updateStatus(id, dto.status, user);
+  }
+
   @Patch(':id')
   @Roles('Super Admin')
   update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
     return this.users.update(id, dto);
+  }
+
+  @Delete(':id')
+  @Roles('Super Admin')
+  remove(@Param('id') id: string) {
+    return this.users.remove(id);
+  }
+
+  @Patch(':id/password')
+  @Roles('Super Admin')
+  setPassword(@Param('id') id: string, @Body() dto: SetUserPasswordDto) {
+    return this.users.setPassword(id, dto.newPassword);
   }
 
   @Post(':id/reset-password')

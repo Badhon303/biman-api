@@ -5,7 +5,7 @@ export class LoginDto {
   email: string;
 
   @IsString()
-  @MinLength(1)
+  @MinLength(6)
   password: string;
 }
 
@@ -20,6 +20,6 @@ export class ChangePasswordDto {
   currentPassword: string;
 
   @IsString()
-  @MinLength(12)
+  @MinLength(6)
   newPassword: string;
 }
