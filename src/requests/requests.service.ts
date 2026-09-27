@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationPublisher } from '../notifications/notification-publisher.service';
 import { CreateRequestDto } from './requests.dto';
 import { requestStatusLabel } from '../common/api-serializers';
+import { WORKABLE_STATUSES } from '../common/ticket-workflow';
 
 @Injectable()
 export class RequestsService {
@@ -95,7 +96,9 @@ export class RequestsService {
       await tx.ticket.update({
         where: { id: dto.ticketId },
         data: {
-          status: TicketStatus.AWAITING_PARTS,
+          ...(ticket.status === TicketStatus.IN_PROGRESS
+            ? { status: TicketStatus.AWAITING_PARTS }
+            : {}),
           history: {
             create: {
               actorId: actor.sub,
@@ -167,15 +170,21 @@ export class RequestsService {
       await tx.ticket.update({
         where: { id: request.ticketId },
         data: {
-          status:
-            (await tx.equipmentRequest.count({
-              where: {
-                ticketId: request.ticketId,
-                status: { in: [RequestStatus.PENDING, RequestStatus.APPROVED] },
-              },
-            })) > 0
-              ? TicketStatus.AWAITING_PARTS
-              : TicketStatus.IN_PROGRESS,
+          ...(WORKABLE_STATUSES.includes(request.ticket.status)
+            ? {
+                status:
+                  (await tx.equipmentRequest.count({
+                    where: {
+                      ticketId: request.ticketId,
+                      status: {
+                        in: [RequestStatus.PENDING, RequestStatus.APPROVED],
+                      },
+                    },
+                  })) > 0
+                    ? TicketStatus.AWAITING_PARTS
+                    : TicketStatus.IN_PROGRESS,
+              }
+            : {}),
           history: { create: { actorId: actor.sub, label: message } },
         },
       });
@@ -191,7 +200,10 @@ export class RequestsService {
   async receive(id: string, actor: AuthUser) {
     const request = await this.prisma.equipmentRequest.findUnique({
       where: { id },
-      include: { requestedBy: { select: { id: true } } },
+      include: {
+        requestedBy: { select: { id: true } },
+        ticket: { select: { status: true } },
+      },
     });
     if (!request) throw new NotFoundException('Request not found.');
     if (request.status !== RequestStatus.APPROVED)
@@ -214,7 +226,9 @@ export class RequestsService {
         await tx.ticket.update({
           where: { id: request.ticketId },
           data: {
-            status: TicketStatus.IN_PROGRESS,
+            ...(request.ticket.status === TicketStatus.AWAITING_PARTS
+              ? { status: TicketStatus.IN_PROGRESS }
+              : {}),
             history: {
               create: {
                 actorId: actor.sub,

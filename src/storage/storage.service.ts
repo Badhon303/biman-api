@@ -15,6 +15,7 @@ import { basename, dirname, isAbsolute, resolve, sep } from 'node:path';
 import sharp from 'sharp';
 import { AuthUser } from '../common/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
+import { WORKABLE_STATUSES } from '../common/ticket-workflow';
 import {
   AttachFileDto,
   UploadDocumentDto,
@@ -464,17 +465,21 @@ export class StorageService {
       await this.authorizeTicket(ownerId, user);
   }
 
+  /** Ticket pictures are maintenance-record inputs: assigned engineer, work in progress. */
   private async authorizeTicket(ticketId: string, user: AuthUser) {
     const ticket = await this.prisma.ticket.findUnique({
       where: { id: ticketId },
-      select: { assignedEngineerId: true },
+      select: { assignedEngineerId: true, status: true },
     });
     if (!ticket) throw new NotFoundException('Ticket not found.');
-    if (
-      !['Super Admin', 'Manager'].includes(user.role) &&
-      ticket.assignedEngineerId !== user.sub
-    )
-      throw new ForbiddenException();
+    if (user.role !== 'Engineer' || ticket.assignedEngineerId !== user.sub)
+      throw new ForbiddenException(
+        'Only the assigned engineer can upload ticket pictures.',
+      );
+    if (!WORKABLE_STATUSES.includes(ticket.status))
+      throw new BadRequestException(
+        'Pictures can only be uploaded while work is in progress or awaiting parts.',
+      );
   }
 
   private async authorizeFileRead(asset: any, user: AuthUser) {

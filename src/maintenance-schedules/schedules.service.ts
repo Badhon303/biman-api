@@ -9,6 +9,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationPublisher } from '../notifications/notification-publisher.service';
 import { CreateScheduleDto } from './schedules.dto';
 import { scheduleStatusLabel } from '../common/api-serializers';
+import {
+  fixedChecklistFor,
+  toChecklistItems,
+} from '../common/fixed-checklists';
 
 @Injectable()
 export class SchedulesService {
@@ -114,13 +118,18 @@ export class SchedulesService {
         where: { id: scheduleId, ticketId: null },
       });
       if (!current) return [];
-      const templates = await tx.checklistTemplateItem.findMany({
-        where: {
-          serviceType: ServiceKind.V_SERVICE,
-          equipmentTypeServiceId: null,
-        },
-        orderBy: { sortOrder: 'asc' },
-      });
+      const templates =
+        fixedChecklistFor(
+          equipment.equipmentType.name,
+          ServiceKind.V_SERVICE,
+        ) ??
+        (await tx.checklistTemplateItem.findMany({
+          where: {
+            serviceType: ServiceKind.V_SERVICE,
+            equipmentTypeServiceId: null,
+          },
+          orderBy: { sortOrder: 'asc' },
+        }));
       const systemActorId = await this.systemActorId(tx);
       const ticket = await tx.ticket.create({
         data: {
@@ -134,13 +143,7 @@ export class SchedulesService {
           createdByUserId: systemActorId,
           maintenanceRecord: {
             create: {
-              checklistItems: {
-                create: templates.map(({ category, label, sortOrder }) => ({
-                  category,
-                  label,
-                  sortOrder,
-                })),
-              },
+              checklistItems: { create: toChecklistItems(templates) },
             },
           },
           history: {

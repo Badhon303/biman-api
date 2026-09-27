@@ -16,6 +16,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/current-user.decorator';
 import { NotificationPublisher } from '../notifications/notification-publisher.service';
 import { crossedHourBands } from './service-check.logic';
+import {
+  ChecklistTemplate,
+  fixedChecklistFor,
+  toChecklistItems,
+} from '../common/fixed-checklists';
 import { PaginationDto } from '../common/pagination.dto';
 import {
   equipmentStatusLabel,
@@ -237,6 +242,11 @@ export class EquipmentService {
   async serviceCheck(id: string, dto: ServiceCheckDto, actor: AuthUser) {
     const equipment = await this.getRaw(id);
     await this.assertEngineerEquipmentAccess(id, actor);
+    const { name: equipmentTypeName } =
+      await this.prisma.equipmentType.findUniqueOrThrow({
+        where: { id: equipment.equipmentTypeId },
+        select: { name: true },
+      });
     const services = await this.prisma.equipmentTypeService.findMany({
       where: {
         equipmentTypeId: equipment.equipmentTypeId,
@@ -287,23 +297,27 @@ export class EquipmentService {
           )
             .toString()
             .padStart(4, '0')}`;
-          let templates = await tx.checklistTemplateItem.findMany({
-            where: {
-              serviceType: service.kind,
-              equipmentTypeServiceId:
-                service.kind === ServiceKind.OTHERS ? service.id : null,
-            },
-            orderBy: { sortOrder: 'asc' },
-          });
-          if (!templates.length && service.kind === ServiceKind.OTHERS) {
+          let templates: ChecklistTemplate[] =
+            service.kind === ServiceKind.OTHERS
+              ? await tx.checklistTemplateItem.findMany({
+                  where: {
+                    serviceType: service.kind,
+                    equipmentTypeServiceId: service.id,
+                  },
+                  orderBy: { sortOrder: 'asc' },
+                })
+              : [];
+          if (!templates.length)
+            templates =
+              fixedChecklistFor(equipmentTypeName, service.kind) ?? [];
+          if (!templates.length)
             templates = await tx.checklistTemplateItem.findMany({
               where: {
-                serviceType: ServiceKind.OTHERS,
+                serviceType: service.kind,
                 equipmentTypeServiceId: null,
               },
               orderBy: { sortOrder: 'asc' },
             });
-          }
           const ticket = await tx.ticket.create({
             data: {
               ticketNo,
@@ -316,13 +330,7 @@ export class EquipmentService {
               createdByUserId: actor.sub,
               maintenanceRecord: {
                 create: {
-                  checklistItems: {
-                    create: templates.map(({ category, label, sortOrder }) => ({
-                      category,
-                      label,
-                      sortOrder,
-                    })),
-                  },
+                  checklistItems: { create: toChecklistItems(templates) },
                 },
               },
               history: {

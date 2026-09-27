@@ -6,10 +6,10 @@ import {
   WebSocketServer,
   OnGatewayConnection,
 } from '@nestjs/websockets';
-import Redis from 'ioredis';
+import { Subscription } from 'rxjs';
 import { Server, Socket } from 'socket.io';
 import { PrismaService } from '../prisma/prisma.service';
-import { NotificationEvent } from './notification-publisher.service';
+import { NotificationStream } from './notification-stream.service';
 
 @WebSocketGateway({ namespace: '/notifications', cors: { origin: true } })
 export class NotificationsGateway
@@ -18,22 +18,17 @@ export class NotificationsGateway
   @WebSocketServer()
   private server: Server;
 
-  private subscriber: Redis;
+  private subscription?: Subscription;
 
   constructor(
     private readonly config: ConfigService,
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
-  ) {
-    this.subscriber = new Redis(
-      config.get<string>('REDIS_URL', 'redis://localhost:6379'),
-    );
-  }
+    private readonly stream: NotificationStream,
+  ) {}
 
-  async onModuleInit() {
-    await this.subscriber.subscribe('biman:notifications');
-    this.subscriber.on('message', (_channel, message) => {
-      const event = JSON.parse(message) as NotificationEvent;
+  onModuleInit() {
+    this.subscription = this.stream.all$.subscribe((event) => {
       this.server.to(`user:${event.userId}`).emit('notification', event);
     });
   }
@@ -67,7 +62,7 @@ export class NotificationsGateway
     }
   }
 
-  async onModuleDestroy() {
-    await this.subscriber.quit();
+  onModuleDestroy() {
+    this.subscription?.unsubscribe();
   }
 }

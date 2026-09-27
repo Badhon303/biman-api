@@ -6,6 +6,7 @@ import { NotificationsService } from './notifications.service';
 import { NotificationPublisher } from './notification-publisher.service';
 import { NotificationProcessor } from './notification.processor';
 import { NotificationsGateway } from './notifications.gateway';
+import { NotificationStream } from './notification-stream.service';
 
 @Global()
 @Module({
@@ -18,6 +19,7 @@ import { NotificationsGateway } from './notifications.gateway';
     NotificationsService,
     NotificationPublisher,
     NotificationProcessor,
+    NotificationStream,
     NotificationsGateway,
   ],
   exports: [NotificationPublisher],

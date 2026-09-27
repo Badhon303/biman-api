@@ -16,6 +16,7 @@ import { AuthUser } from '../common/current-user.decorator';
 import { PaginationDto } from '../common/pagination.dto';
 import { serializeTicket, ticketStatusLabel } from '../common/api-serializers';
 import { PrismaService } from '../prisma/prisma.service';
+import { WORKABLE_STATUSES } from '../common/ticket-workflow';
 import { NotificationPublisher } from '../notifications/notification-publisher.service';
 import {
   CreateTicketDto,
@@ -85,7 +86,7 @@ export class TicketsService {
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: query.order ?? 'desc' },
-        include: this.ticketInclude(),
+        include: this.ticketListInclude(),
       }),
       this.prisma.ticket.count({ where }),
     ]);
@@ -219,11 +220,7 @@ export class TicketsService {
     dto: MaintenanceUpdateDto,
     actor: AuthUser,
   ) {
-    const ticket = await this.getForUser(id, actor);
-    if (ticket.status !== 'IN_PROGRESS')
-      throw new BadRequestException(
-        'Maintenance details can only be edited while work is in progress.',
-      );
+    await this.getForWork(id, actor);
     const [record] = await this.prisma.$transaction([
       this.prisma.maintenanceRecord.update({
         where: { ticketId: id },
@@ -260,16 +257,16 @@ export class TicketsService {
     checked: boolean,
     actor: AuthUser,
   ) {
-    const ticket = await this.getForUser(id, actor);
-    if (ticket.status !== 'IN_PROGRESS')
-      throw new BadRequestException(
-        'Checklist can only be updated while work is in progress.',
-      );
+    await this.getForWork(id, actor);
     const item = await this.prisma.checklistItem.findFirst({
       where: { id: itemId, maintenanceRecord: { ticketId: id } },
     });
     if (!item)
       throw new NotFoundException('Checklist item not found for this ticket.');
+    if (!item.applicable)
+      throw new BadRequestException(
+        'This checklist item does not apply to this service.',
+      );
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.checklistItem.update({
         where: { id: itemId },
@@ -287,11 +284,7 @@ export class TicketsService {
   }
 
   async addFeedback(id: string, dto: FeedbackDto, actor: AuthUser) {
-    const ticket = await this.getForUser(id, actor);
-    if (!['IN_PROGRESS', 'AWAITING_VERIFICATION'].includes(ticket.status))
-      throw new BadRequestException(
-        'Feedback can only be added while work is active or awaiting verification.',
-      );
+    await this.getForWork(id, actor);
     const bodyHtml = sanitizeHtml(dto.bodyHtml, {
       allowedTags: sanitizeHtml.defaults.allowedTags,
       allowedAttributes: sanitizeHtml.defaults.allowedAttributes,
@@ -309,7 +302,7 @@ export class TicketsService {
   }
 
   async submitForVerification(id: string, actor: AuthUser) {
-    const ticket = await this.getForUser(id, actor);
+    const ticket = await this.getForWork(id, actor);
     const record = await this.prisma.maintenanceRecord.findUnique({
       where: { ticketId: id },
       include: { checklistItems: true },
@@ -324,7 +317,9 @@ export class TicketsService {
         'Complete the maintenance record, tests, and feedback before submitting.',
       );
     }
-    if (record.checklistItems.some((item) => !item.checked)) {
+    if (
+      record.checklistItems.some((item) => item.applicable && !item.checked)
+    ) {
       throw new BadRequestException(
         'Complete every checklist item before submitting.',
       );
@@ -371,6 +366,20 @@ export class TicketsService {
     return serializeTicket(updated);
   }
 
+  async returnToEngineer(id: string, reason: string, actor: AuthUser) {
+    const ticket = await this.getForEdit(id);
+    if (ticket.status !== 'AWAITING_VERIFICATION')
+      throw new BadRequestException(
+        'Only tickets awaiting verification can be returned to the engineer.',
+      );
+    return this.setStatus(
+      id,
+      TicketStatus.IN_PROGRESS,
+      actor,
+      `Returned to engineer — ${reason.trim()}`,
+    );
+  }
+
   private async setStatus(
     id: string,
     status: TicketStatus,
@@ -408,6 +417,39 @@ export class TicketsService {
       );
     }
     return ticket;
+  }
+
+  /** Maintenance record inputs belong to the assigned engineer while work is in progress. */
+  private async getForWork(id: string, user: AuthUser) {
+    const ticket = await this.getForEdit(id);
+    if (user.role !== 'Engineer' || ticket.assignedEngineerId !== user.sub)
+      throw new ForbiddenException(
+        'Only the assigned engineer can update the maintenance record.',
+      );
+    if (!WORKABLE_STATUSES.includes(ticket.status))
+      throw new BadRequestException(
+        ['AWAITING_VERIFICATION', 'COMPLETED', 'CLOSED'].includes(ticket.status)
+          ? 'The maintenance record is locked after submission.'
+          : 'Start work before updating the maintenance record.',
+      );
+    return ticket;
+  }
+
+  private ticketListInclude(): Prisma.TicketInclude {
+    return {
+      equipment: {
+        select: {
+          id: true,
+          assetNo: true,
+          model: true,
+          equipmentType: { select: { name: true } },
+        },
+      },
+      pmService: { select: { name: true } },
+      createdBy: { select: { id: true, name: true, email: true } },
+      assignedEngineer: { select: { id: true, name: true } },
+      maintenanceRecord: { select: { id: true, problemDescription: true } },
+    };
   }
 
   private ticketInclude(): Prisma.TicketInclude {

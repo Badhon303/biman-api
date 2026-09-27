@@ -87,6 +87,12 @@ export class FeedbackDto {
   bodyHtml: string;
 }
 
+export class ReturnTicketDto {
+  @IsString()
+  @MinLength(2)
+  reason: string;
+}
+
 export class VerifyTicketDto {
   @IsOptional()
   @Type(() => Number)

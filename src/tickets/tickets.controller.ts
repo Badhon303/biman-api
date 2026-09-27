@@ -17,6 +17,7 @@ import {
   CreateTicketDto,
   FeedbackDto,
   MaintenanceUpdateDto,
+  ReturnTicketDto,
   UpdateTicketDto,
   VerifyTicketDto,
 } from './tickets.dto';
@@ -113,6 +114,16 @@ export class TicketsController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.tickets.verifyAndClose(id, dto, user);
+  }
+
+  @Post(':id/return')
+  @Roles('Super Admin', 'Manager')
+  returnToEngineer(
+    @Param('id') id: string,
+    @Body() dto: ReturnTicketDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.tickets.returnToEngineer(id, dto.reason, user);
   }
 
   @Get(':id')

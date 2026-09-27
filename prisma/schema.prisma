@@ -348,6 +348,7 @@ model ChecklistItem {
   category            String
   label               String
   checked             Boolean           @default(false)
+  applicable          Boolean           @default(true)
   sortOrder           Int               @default(0) @map("sort_order")
   maintenanceRecord   MaintenanceRecord @relation(fields: [maintenanceRecordId], references: [id], onDelete: Cascade)
 
