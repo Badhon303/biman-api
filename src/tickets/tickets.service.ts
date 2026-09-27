@@ -17,6 +17,10 @@ import { PaginationDto } from '../common/pagination.dto';
 import { serializeTicket, ticketStatusLabel } from '../common/api-serializers';
 import { PrismaService } from '../prisma/prisma.service';
 import { WORKABLE_STATUSES } from '../common/ticket-workflow';
+import {
+  addMonthsClamped,
+  scheduleStatusFor,
+} from '../maintenance-schedules/schedule-logic';
 import { NotificationPublisher } from '../notifications/notification-publisher.service';
 import {
   CreateTicketDto,
@@ -343,17 +347,43 @@ export class TicketsService {
       0,
       (closedAt.getTime() - ticket.createdAt.getTime()) / 3600000,
     );
-    const updated = await this.prisma.ticket.update({
-      where: { id },
-      data: {
-        status: TicketStatus.CLOSED,
-        closedDate: closedAt,
-        downtimeHours: dto.downtimeHours ?? computedDowntime,
-        history: {
-          create: { actorId: actor.sub, label: 'Ticket verified and closed' },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const closed = await tx.ticket.update({
+        where: { id },
+        data: {
+          status: TicketStatus.CLOSED,
+          closedDate: closedAt,
+          downtimeHours: dto.downtimeHours ?? computedDowntime,
+          history: {
+            create: { actorId: actor.sub, label: 'Ticket verified and closed' },
+          },
         },
-      },
-      include: this.ticketInclude(),
+        include: this.ticketInclude(),
+      });
+      if (ticket.serviceType === 'V_SERVICE') {
+        const dueDate = addMonthsClamped(closedAt, 6);
+        const advanced = await tx.maintenanceSchedule.updateMany({
+          where: { ticketId: ticket.id },
+          data: {
+            ticketId: null,
+            lastDate: closedAt,
+            dueDate,
+            status: scheduleStatusFor(dueDate, closedAt),
+          },
+        });
+        if (!advanced.count) {
+          await tx.maintenanceSchedule.create({
+            data: {
+              scheduleNo: `SCH-${ticket.id}`,
+              equipmentId: ticket.equipmentId,
+              lastDate: closedAt,
+              dueDate,
+              status: scheduleStatusFor(dueDate, closedAt),
+            },
+          });
+        }
+      }
+      return closed;
     });
     await this.notifyTicketParties(
       updated,
@@ -361,8 +391,6 @@ export class TicketsService {
       'Ticket closed',
       `${updated.ticketNo} was verified and closed.`,
     );
-    if (ticket.serviceType === 'V_SERVICE')
-      await this.createNextVServiceSchedule(ticket.equipmentId, closedAt);
     return serializeTicket(updated);
   }
 
@@ -540,23 +568,5 @@ export class TicketsService {
         });
       await this.notificationPublisher.dispatch(notifications);
     }
-  }
-
-  private async createNextVServiceSchedule(
-    equipmentId: string,
-    lastDate: Date,
-  ) {
-    const dueDate = new Date(lastDate);
-    dueDate.setMonth(dueDate.getMonth() + 6);
-    const nextNo = `SCH-${Date.now()}`;
-    await this.prisma.maintenanceSchedule.create({
-      data: {
-        scheduleNo: nextNo,
-        equipmentId,
-        lastDate,
-        dueDate,
-        status: 'SCHEDULED',
-      },
-    });
   }
 }

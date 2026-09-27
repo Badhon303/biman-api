@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { Role, ServiceKind, TicketType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationPublisher } from '../notifications/notification-publisher.service';
@@ -13,6 +13,11 @@ import {
   fixedChecklistFor,
   toChecklistItems,
 } from '../common/fixed-checklists';
+import {
+  addMonthsClamped,
+  isScheduleDue,
+  scheduleStatusFor,
+} from './schedule-logic';
 
 @Injectable()
 export class SchedulesService {
@@ -61,21 +66,26 @@ export class SchedulesService {
       );
     }
     const lastDate = new Date(dto.lastDate);
-    const dueDate = new Date(lastDate);
-    dueDate.setMonth(dueDate.getMonth() + 6);
-    const schedule = await this.prisma.maintenanceSchedule.create({
+    const dueDate = addMonthsClamped(lastDate, 6);
+    let schedule = await this.prisma.maintenanceSchedule.create({
       data: {
         scheduleNo: `SCH-${Date.now()}`,
         equipmentId: dto.equipmentId,
         lastDate,
         dueDate,
-        status: this.statusFor(dueDate),
+        status: scheduleStatusFor(dueDate),
       },
     });
+    if (isScheduleDue(dueDate, new Date())) {
+      await this.createDueTicket(schedule.id, equipment, dueDate);
+      schedule = await this.prisma.maintenanceSchedule.findUniqueOrThrow({
+        where: { id: schedule.id },
+      });
+    }
     return { ...schedule, status: scheduleStatusLabel[schedule.status] };
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_2AM)
+  @Cron('0 */10 * * * *')
   async processDueSchedules() {
     const now = new Date();
     const schedules = await this.prisma.maintenanceSchedule.findMany({
@@ -87,20 +97,19 @@ export class SchedulesService {
       },
     });
     for (const schedule of schedules) {
-      const status = this.statusFor(schedule.dueDate);
-      if (schedule.dueDate > now) {
+      const status = scheduleStatusFor(schedule.dueDate, now);
+      if (!isScheduleDue(schedule.dueDate, now)) {
         await this.prisma.maintenanceSchedule.update({
           where: { id: schedule.id },
           data: { status },
         });
-        if (status !== 'DUE_SOON') continue;
-      } else {
-        await this.createDueTicket(
-          schedule.id,
-          schedule.equipment,
-          schedule.dueDate,
-        );
+        continue;
       }
+      await this.createDueTicket(
+        schedule.id,
+        schedule.equipment,
+        schedule.dueDate,
+      );
     }
   }
 
@@ -113,68 +122,71 @@ export class SchedulesService {
       (service) => service.kind === ServiceKind.V_SERVICE,
     );
     if (!vService) return;
-    const notifications = await this.prisma.$transaction(async (tx) => {
-      const current = await tx.maintenanceSchedule.findFirst({
-        where: { id: scheduleId, ticketId: null },
-      });
-      if (!current) return [];
-      const templates =
-        fixedChecklistFor(
-          equipment.equipmentType.name,
-          ServiceKind.V_SERVICE,
-        ) ??
-        (await tx.checklistTemplateItem.findMany({
+    const notifications = await this.prisma.$transaction(
+      async (tx) => {
+        const current = await tx.maintenanceSchedule.findFirst({
+          where: { id: scheduleId, ticketId: null },
+        });
+        if (!current) return [];
+        const templates =
+          fixedChecklistFor(
+            equipment.equipmentType.name,
+            ServiceKind.V_SERVICE,
+          ) ??
+          (await tx.checklistTemplateItem.findMany({
+            where: {
+              serviceType: ServiceKind.V_SERVICE,
+              equipmentTypeServiceId: null,
+            },
+            orderBy: { sortOrder: 'asc' },
+          }));
+        const systemActorId = await this.systemActorId(tx);
+        const ticket = await tx.ticket.create({
+          data: {
+            ticketNo: `TKT-${Date.now()}-${Math.floor(Math.random() * 10000)
+              .toString()
+              .padStart(4, '0')}`,
+            serviceType: TicketType.V_SERVICE,
+            pmServiceId: vService.id,
+            equipmentId: equipment.id,
+            dueDate,
+            createdByUserId: systemActorId,
+            maintenanceRecord: {
+              create: {
+                checklistItems: { create: toChecklistItems(templates) },
+              },
+            },
+            history: {
+              create: {
+                actorId: systemActorId,
+                label: 'V-Service ticket created by maintenance schedule',
+              },
+            },
+          },
+        });
+        await tx.maintenanceSchedule.update({
+          where: { id: scheduleId },
+          data: { ticketId: ticket.id, status: 'OVERDUE' },
+        });
+        const recipients = await tx.user.findMany({
           where: {
-            serviceType: ServiceKind.V_SERVICE,
-            equipmentTypeServiceId: null,
+            status: 'ACTIVE',
+            deletedAt: null,
+            role: { in: [Role.SUPER_ADMIN, Role.MANAGER] },
           },
-          orderBy: { sortOrder: 'asc' },
-        }));
-      const systemActorId = await this.systemActorId(tx);
-      const ticket = await tx.ticket.create({
-        data: {
-          ticketNo: `TKT-${Date.now()}-${Math.floor(Math.random() * 10000)
-            .toString()
-            .padStart(4, '0')}`,
-          serviceType: TicketType.V_SERVICE,
-          pmServiceId: vService.id,
-          equipmentId: equipment.id,
-          dueDate,
-          createdByUserId: systemActorId,
-          maintenanceRecord: {
-            create: {
-              checklistItems: { create: toChecklistItems(templates) },
-            },
-          },
-          history: {
-            create: {
-              actorId: systemActorId,
-              label: 'V-Service ticket created by maintenance schedule',
-            },
-          },
-        },
-      });
-      await tx.maintenanceSchedule.update({
-        where: { id: scheduleId },
-        data: { ticketId: ticket.id, status: 'OVERDUE' },
-      });
-      const recipients = await tx.user.findMany({
-        where: {
-          status: 'ACTIVE',
-          deletedAt: null,
-          role: { in: [Role.SUPER_ADMIN, Role.MANAGER] },
-        },
-        select: { id: true },
-      });
-      if (!recipients.length) return [];
-      return tx.appNotification.createManyAndReturn({
-        data: recipients.map(({ id }) => ({
-          userId: id,
-          type: 'V-Service due',
-          message: `${equipment.assetNo} has a V-Service ticket due.`,
-        })),
-      });
-    });
+          select: { id: true },
+        });
+        if (!recipients.length) return [];
+        return tx.appNotification.createManyAndReturn({
+          data: recipients.map(({ id }) => ({
+            userId: id,
+            type: 'V-Service ticket generated',
+            message: `${ticket.ticketNo} was generated for ${equipment.assetNo} because its V-Service is due.`,
+          })),
+        });
+      },
+      { timeout: 20_000 },
+    );
     await this.notificationPublisher.dispatch(notifications);
   }
 
@@ -189,12 +201,5 @@ export class SchedulesService {
         'Create an active Super Admin before enabling maintenance schedule jobs.',
       );
     return actor.id;
-  }
-
-  private statusFor(dueDate: Date) {
-    const daysLeft = (dueDate.getTime() - Date.now()) / 86400000;
-    if (daysLeft < 0) return 'OVERDUE' as const;
-    if (daysLeft <= 15) return 'DUE_SOON' as const;
-    return 'SCHEDULED' as const;
   }
 }
