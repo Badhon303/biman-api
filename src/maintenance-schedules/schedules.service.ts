@@ -4,7 +4,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { Role, ServiceKind, TicketType } from '@prisma/client';
+import {
+  NotificationEntity,
+  Role,
+  ServiceKind,
+  TicketType,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationPublisher } from '../notifications/notification-publisher.service';
 import { CreateScheduleDto } from './schedules.dto';
@@ -182,6 +187,8 @@ export class SchedulesService {
             userId: id,
             type: 'V-Service ticket generated',
             message: `${ticket.ticketNo} was generated for ${equipment.assetNo} because its V-Service is due.`,
+            entityType: NotificationEntity.TICKET,
+            entityId: ticket.id,
           })),
         });
       },

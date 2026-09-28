@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  NotificationEntity,
   Prisma,
   Role,
   TicketPriority,
@@ -177,6 +178,8 @@ export class TicketsService {
         userId: engineer.id,
         type: 'Ticket assigned',
         message: `${updated.ticketNo} was assigned to you.`,
+        entityType: NotificationEntity.TICKET,
+        entityId: updated.id,
       },
     });
     await this.notificationPublisher.dispatch([notification]);
@@ -537,7 +540,13 @@ export class TicketsService {
     if (recipients.length) {
       const notifications =
         await this.prisma.appNotification.createManyAndReturn({
-          data: recipients.map(({ id: userId }) => ({ userId, type, message })),
+          data: recipients.map(({ id: userId }) => ({
+            userId,
+            type,
+            message,
+            entityType: NotificationEntity.TICKET,
+            entityId: ticket.id,
+          })),
         });
       await this.notificationPublisher.dispatch(notifications);
     }
@@ -564,7 +573,13 @@ export class TicketsService {
     if (ids.length) {
       const notifications =
         await this.prisma.appNotification.createManyAndReturn({
-          data: ids.map((userId) => ({ userId, type, message })),
+          data: ids.map((userId) => ({
+            userId,
+            type,
+            message,
+            entityType: NotificationEntity.TICKET,
+            entityId: ticket.id,
+          })),
         });
       await this.notificationPublisher.dispatch(notifications);
     }

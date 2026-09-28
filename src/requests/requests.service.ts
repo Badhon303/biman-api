@@ -4,7 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, Role, RequestStatus, TicketStatus } from '@prisma/client';
+import {
+  NotificationEntity,
+  Prisma,
+  Role,
+  RequestStatus,
+  TicketStatus,
+} from '@prisma/client';
 import { AuthUser } from '../common/current-user.decorator';
 import { PaginationDto } from '../common/pagination.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -120,6 +126,8 @@ export class RequestsService {
           userId,
           type: 'New Request',
           message: `${created.requestNo}: ${created.item} requested for ${ticket.equipment.assetNo}.`,
+          entityType: NotificationEntity.REQUEST,
+          entityId: created.id,
         })),
       });
       return { request: created, notifications };
@@ -165,6 +173,8 @@ export class RequestsService {
           userId: request.requestedBy.id,
           type: `Request ${decision.toLowerCase()}`,
           message,
+          entityType: NotificationEntity.REQUEST,
+          entityId: id,
         },
       });
       await tx.ticket.update({
@@ -243,6 +253,8 @@ export class RequestsService {
           userId: request.requestedBy.id,
           type: 'Request received',
           message: `${request.requestNo} was received.`,
+          entityType: NotificationEntity.REQUEST,
+          entityId: id,
         },
       });
       return { received, notification };

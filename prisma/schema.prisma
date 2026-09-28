@@ -442,14 +442,23 @@ model MaintenanceSchedule {
   @@map("maintenance_schedules")
 }
 
+enum NotificationEntity {
+  TICKET
+  REQUEST
+  SCHEDULE
+  EQUIPMENT
+}
+
 model AppNotification {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @map("user_id") @db.Uuid
-  type      String
-  message   String
-  read      Boolean  @default(false)
-  createdAt DateTime @default(now()) @map("created_at")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String              @id @default(uuid()) @db.Uuid
+  userId     String              @map("user_id") @db.Uuid
+  type       String
+  message    String
+  read       Boolean             @default(false)
+  entityType NotificationEntity? @map("entity_type")
+  entityId   String?             @map("entity_id") @db.Uuid
+  createdAt  DateTime            @default(now()) @map("created_at")
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, read, createdAt])
   @@map("app_notifications")

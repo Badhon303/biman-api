@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import {
   EquipmentStatus,
+  NotificationEntity,
   Prisma,
   Role,
   ServiceKind,
@@ -367,6 +368,8 @@ export class EquipmentService {
             userId,
             type: 'Service threshold crossed',
             message: `${equipment.assetNo} crossed ${created.length} maintenance service band(s).`,
+            entityType: NotificationEntity.EQUIPMENT,
+            entityId: id,
           })),
         });
         await tx.equipment.update({

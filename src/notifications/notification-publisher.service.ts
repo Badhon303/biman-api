@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { NotificationEntity } from '@prisma/client';
 
 export interface NotificationEvent {
   id: string;
@@ -8,6 +9,8 @@ export interface NotificationEvent {
   type: string;
   message: string;
   read: boolean;
+  entityType: NotificationEntity | null;
+  entityId: string | null;
   createdAt: Date;
 }
 
