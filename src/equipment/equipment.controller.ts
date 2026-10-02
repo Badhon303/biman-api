@@ -35,6 +35,24 @@ export class EquipmentController {
     return this.equipment.list(query, user);
   }
 
+  @Get('archive')
+  @Roles('Super Admin', 'Manager')
+  archive() {
+    return this.equipment.archive();
+  }
+
+  @Post(':id/restore')
+  @Roles('Super Admin', 'Manager')
+  restore(@Param('id') id: string) {
+    return this.equipment.restore(id);
+  }
+
+  @Delete(':id/permanent')
+  @Roles('Super Admin', 'Manager')
+  permanentlyRemove(@Param('id') id: string) {
+    return this.equipment.permanentlyRemove(id);
+  }
+
   @Get(':id')
   get(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.equipment.get(id, user);

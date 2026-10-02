@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { FilePurpose, FileStatus, PhotoSlot } from '@prisma/client';
+import { FilePurpose, FileStatus, PhotoSlot, Prisma } from '@prisma/client';
 import { createReadStream } from 'node:fs';
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
@@ -129,6 +129,9 @@ export class StorageService {
     await this.authorizeUpload('EQUIPMENT_DOCUMENT', dto.equipmentId, user);
     if (file.size > 10 * 1024 * 1024)
       throw new BadRequestException('Document uploads are limited to 10 MB.');
+    const extension = file.originalname
+      .slice(file.originalname.lastIndexOf('.'))
+      .toLowerCase();
     const isPdf = file.buffer.subarray(0, 5).toString() === '%PDF-';
     const isJpeg =
       file.buffer[0] === 0xff &&
@@ -137,21 +140,53 @@ export class StorageService {
     const isPng = file.buffer
       .subarray(0, 8)
       .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-    if (!isPdf && !isJpeg && !isPng)
-      throw new BadRequestException('Documents must be PDF or JPEG/PNG scans.');
+    const isImage = isJpeg || isPng;
+    const isDocx =
+      extension === '.docx' &&
+      file.buffer
+        .subarray(0, 4)
+        .equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) &&
+      file.buffer.includes(Buffer.from('[Content_Types].xml')) &&
+      file.buffer.includes(Buffer.from('word/document.xml'));
+    const isText = extension === '.txt' && !file.buffer.includes(0);
+    if (isText) {
+      try {
+        new TextDecoder('utf-8', { fatal: true }).decode(file.buffer);
+      } catch {
+        throw new BadRequestException(
+          'Text documents must use UTF-8 encoding.',
+        );
+      }
+    }
+    if (!isPdf && !isImage && !isDocx && !isText)
+      throw new BadRequestException(
+        'Documents must be PDF, DOCX, TXT, or JPEG/PNG scans.',
+      );
 
     const id = randomUUID();
     const directory = `equipment/${dto.equipmentId}/documents`;
-    const extension = isPdf ? '.pdf' : '.webp';
-    const relativePath = `${directory}/${id}${extension}`;
+    const storedExtension = isPdf
+      ? '.pdf'
+      : isImage
+        ? '.webp'
+        : isDocx
+          ? '.docx'
+          : '.txt';
+    const relativePath = `${directory}/${id}${storedExtension}`;
     const destination = this.absolutePath(relativePath);
     await mkdir(dirname(destination), { recursive: true });
     try {
       let output = file.buffer;
       let width: number | undefined;
       let height: number | undefined;
-      let mimeType = 'application/pdf';
-      if (!isPdf) {
+      let mimeType = isPdf
+        ? 'application/pdf'
+        : isDocx
+          ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          : isText
+            ? 'text/plain; charset=utf-8'
+            : 'image/webp';
+      if (isImage) {
         const result = await sharp(file.buffer, {
           limitInputPixels: 40_000_000,
         })
@@ -331,6 +366,78 @@ export class StorageService {
     });
   }
 
+  async deleteFile(id: string, user: AuthUser) {
+    const asset = await this.prisma.fileAsset.findFirst({
+      where: {
+        id,
+        purpose: {
+          in: [
+            FilePurpose.WORK_IMAGE,
+            FilePurpose.EQUIPMENT_DOCUMENT,
+            FilePurpose.EQUIPMENT_PHOTO,
+          ],
+        },
+        status: FileStatus.ATTACHED,
+        deletedAt: null,
+      },
+      include: {
+        workImage: {
+          include: { maintenanceRecord: { select: { ticketId: true } } },
+        },
+      },
+    });
+    if (!asset) throw new NotFoundException('File not found.');
+    if (asset.purpose === FilePurpose.EQUIPMENT_DOCUMENT)
+      return this.deleteEquipmentDocument(id, user);
+    if (asset.purpose === FilePurpose.EQUIPMENT_PHOTO)
+      return this.deleteEquipmentPhoto(id, user);
+    const ticketId = asset.workImage?.maintenanceRecord.ticketId;
+    if (!ticketId) throw new NotFoundException('Work image not found.');
+    await this.authorizeTicket(ticketId, user);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.workImage.delete({ where: { fileAssetId: id } });
+      await tx.fileAsset.delete({ where: { id } });
+    });
+    await Promise.all([
+      rm(this.absolutePath(asset.relativePath), { force: true }),
+      ...(asset.thumbnailRelativePath
+        ? [rm(this.absolutePath(asset.thumbnailRelativePath), { force: true })]
+        : []),
+    ]);
+    return { success: true };
+  }
+
+  async deleteEquipmentPhoto(id: string, user: AuthUser) {
+    const asset = await this.prisma.fileAsset.findFirst({
+      where: {
+        id,
+        purpose: FilePurpose.EQUIPMENT_PHOTO,
+        status: FileStatus.ATTACHED,
+        deletedAt: null,
+      },
+      include: { equipmentPhoto: true },
+    });
+    if (!asset?.equipmentPhoto)
+      throw new NotFoundException('Equipment photo not found.');
+    await this.authorizeUpload(
+      'EQUIPMENT_PHOTO',
+      asset.equipmentPhoto.equipmentId,
+      user,
+    );
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.equipmentPhoto.delete({ where: { fileAssetId: id } });
+      await tx.fileAsset.delete({ where: { id } });
+    });
+    await Promise.all([
+      rm(this.absolutePath(asset.relativePath), { force: true }),
+      ...(asset.thumbnailRelativePath
+        ? [rm(this.absolutePath(asset.thumbnailRelativePath), { force: true })]
+        : []),
+    ]);
+    return { success: true };
+  }
+
   async deleteEquipmentDocument(id: string, user: AuthUser) {
     if (!['Super Admin', 'Manager'].includes(user.role))
       throw new ForbiddenException();
@@ -467,18 +574,18 @@ export class StorageService {
 
   /** Ticket pictures are maintenance-record inputs: assigned engineer, work in progress. */
   private async authorizeTicket(ticketId: string, user: AuthUser) {
-    const ticket = await this.prisma.ticket.findUnique({
-      where: { id: ticketId },
+    const ticket = await this.prisma.ticket.findFirst({
+      where: { id: ticketId, deletedAt: null },
       select: { assignedEngineerId: true, status: true },
     });
     if (!ticket) throw new NotFoundException('Ticket not found.');
     if (user.role !== 'Engineer' || ticket.assignedEngineerId !== user.sub)
       throw new ForbiddenException(
-        'Only the assigned engineer can upload ticket pictures.',
+        'Only the assigned engineer can add or remove ticket pictures.',
       );
     if (!WORKABLE_STATUSES.includes(ticket.status))
       throw new BadRequestException(
-        'Pictures can only be uploaded while work is in progress or awaiting parts.',
+        'Pictures can only be changed while work is in progress or awaiting parts.',
       );
   }
 
@@ -495,7 +602,7 @@ export class StorageService {
       if (user.role === 'Biman Admin') return;
       if (user.role === 'Engineer') {
         const assigned = await this.prisma.ticket.count({
-          where: { equipmentId, assignedEngineerId: user.sub },
+          where: { equipmentId, assignedEngineerId: user.sub, deletedAt: null },
         });
         if (assigned) return;
       }
@@ -528,6 +635,30 @@ export class StorageService {
     if (purpose === 'EQUIPMENT_PHOTO') return `equipment/${ownerId}/photos`;
     if (purpose === 'WORK_IMAGE') return `tickets/${ownerId}/work-images`;
     return `tickets/${ownerId}/feedback/pending`;
+  }
+
+  async deleteFileAssetRecords(tx: Prisma.TransactionClient, ids: string[]) {
+    const uniqueIds = [...new Set(ids)];
+    if (!uniqueIds.length) return [];
+    const assets = await tx.fileAsset.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { relativePath: true, thumbnailRelativePath: true },
+    });
+    await tx.fileAsset.deleteMany({ where: { id: { in: uniqueIds } } });
+    return assets;
+  }
+
+  async removeStoredAssets(
+    assets: { relativePath: string; thumbnailRelativePath: string | null }[],
+  ) {
+    await Promise.all(
+      assets.flatMap(({ relativePath, thumbnailRelativePath }) => [
+        rm(this.absolutePath(relativePath), { force: true }),
+        ...(thumbnailRelativePath
+          ? [rm(this.absolutePath(thumbnailRelativePath), { force: true })]
+          : []),
+      ]),
+    );
   }
 
   private absolutePath(relativePath: string) {

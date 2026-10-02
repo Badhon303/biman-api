@@ -16,6 +16,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/current-user.decorator';
 import { NotificationPublisher } from '../notifications/notification-publisher.service';
+import { StorageService } from '../storage/storage.service';
 import { crossedHourBands } from './service-check.logic';
 import {
   ChecklistTemplate,
@@ -45,6 +46,7 @@ export class EquipmentService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationPublisher: NotificationPublisher,
+    private readonly storage: StorageService,
   ) {}
 
   async list(
@@ -186,6 +188,82 @@ export class EquipmentService {
       where: { id },
       data: { deletedAt: new Date() },
     });
+    return { success: true };
+  }
+
+  async archive() {
+    const items = await this.prisma.equipment.findMany({
+      where: { deletedAt: { not: null } },
+      orderBy: { deletedAt: 'desc' },
+      include: this.includeEquipment(),
+    });
+    return items.map((item) => this.serialize(item));
+  }
+
+  async restore(id: string) {
+    const item = await this.prisma.equipment.findFirst({
+      where: { id, deletedAt: { not: null } },
+      select: { id: true, equipmentType: { select: { deletedAt: true } } },
+    });
+    if (!item) throw new NotFoundException('Archived equipment not found.');
+    if (item.equipmentType.deletedAt)
+      throw new ConflictException('Restore the equipment type first.');
+    await this.prisma.equipment.update({
+      where: { id },
+      data: { deletedAt: null },
+    });
+    return { success: true };
+  }
+
+  async permanentlyRemove(id: string) {
+    const assets = await this.prisma.$transaction(async (tx) => {
+      const item = await tx.equipment.findFirst({
+        where: { id, deletedAt: { not: null } },
+        select: { id: true },
+      });
+      if (!item) throw new NotFoundException('Archived equipment not found.');
+      const [ticketCount, requestCount] = await Promise.all([
+        tx.ticket.count({ where: { equipmentId: id } }),
+        tx.equipmentRequest.count({ where: { equipmentId: id } }),
+      ]);
+      if (ticketCount || requestCount)
+        throw new ConflictException(
+          'Permanently delete linked tickets and requests first.',
+        );
+      const [photos, documents] = await Promise.all([
+        tx.equipmentPhoto.findMany({
+          where: { equipmentId: id },
+          select: { fileAssetId: true },
+        }),
+        tx.equipmentDocument.findMany({
+          where: { equipmentId: id },
+          select: { fileAssetId: true },
+        }),
+      ]);
+      const schedules = await tx.maintenanceSchedule.findMany({
+        where: { equipmentId: id },
+        select: { id: true },
+      });
+      await tx.appNotification.deleteMany({
+        where: {
+          OR: [
+            { entityType: NotificationEntity.EQUIPMENT, entityId: id },
+            {
+              entityType: NotificationEntity.SCHEDULE,
+              entityId: { in: schedules.map(({ id }) => id) },
+            },
+          ],
+        },
+      });
+      await tx.equipmentPhoto.deleteMany({ where: { equipmentId: id } });
+      await tx.equipmentDocument.deleteMany({ where: { equipmentId: id } });
+      await tx.equipment.delete({ where: { id } });
+      return this.storage.deleteFileAssetRecords(tx, [
+        ...photos.map(({ fileAssetId }) => fileAssetId),
+        ...documents.map(({ fileAssetId }) => fileAssetId),
+      ]);
+    });
+    await this.storage.removeStoredAssets(assets);
     return { success: true };
   }
 
@@ -406,7 +484,11 @@ export class EquipmentService {
     if (
       user.role === 'Engineer' &&
       !(await this.prisma.ticket.count({
-        where: { equipmentId: id, assignedEngineerId: user.sub },
+        where: {
+          equipmentId: id,
+          assignedEngineerId: user.sub,
+          deletedAt: null,
+        },
       }))
     ) {
       throw new ForbiddenException(

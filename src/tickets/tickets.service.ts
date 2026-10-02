@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -23,6 +24,7 @@ import {
   scheduleStatusFor,
 } from '../maintenance-schedules/schedule-logic';
 import { NotificationPublisher } from '../notifications/notification-publisher.service';
+import { StorageService } from '../storage/storage.service';
 import {
   CreateTicketDto,
   FeedbackDto,
@@ -51,6 +53,7 @@ export class TicketsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationPublisher: NotificationPublisher,
+    private readonly storage: StorageService,
   ) {}
 
   async list(
@@ -67,6 +70,7 @@ export class TicketsService {
     if (query.status && !status)
       throw new BadRequestException('Unknown ticket status filter.');
     const where: Prisma.TicketWhereInput = {
+      deletedAt: null,
       ...(status ? { status } : {}),
       ...(user.role === 'Engineer' ? { assignedEngineerId: user.sub } : {}),
       ...(query.assignedToMe === 'true'
@@ -105,6 +109,97 @@ export class TicketsService {
 
   async get(id: string, user: AuthUser) {
     return serializeTicket(await this.getForUser(id, user));
+  }
+
+  async remove(id: string, actor: AuthUser) {
+    await this.prisma.$transaction(async (tx) => {
+      const deleted = await tx.ticket.updateMany({
+        where: { id, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
+      if (deleted.count !== 1) throw new NotFoundException('Ticket not found.');
+      await tx.ticketHistory.create({
+        data: { ticketId: id, actorId: actor.sub, label: 'Ticket deleted' },
+      });
+    });
+    return { success: true };
+  }
+
+  async archive() {
+    const tickets = await this.prisma.ticket.findMany({
+      where: { deletedAt: { not: null } },
+      orderBy: { deletedAt: 'desc' },
+      include: this.ticketInclude(),
+    });
+    return tickets.map((ticket) => serializeTicket(ticket));
+  }
+
+  async restore(id: string, actor: AuthUser) {
+    return this.prisma.$transaction(async (tx) => {
+      const ticket = await tx.ticket.findFirst({
+        where: { id, deletedAt: { not: null } },
+        select: { id: true, equipment: { select: { deletedAt: true } } },
+      });
+      if (!ticket) throw new NotFoundException('Archived ticket not found.');
+      if (ticket.equipment.deletedAt)
+        throw new ConflictException('Restore the equipment first.');
+      await tx.ticket.update({
+        where: { id },
+        data: {
+          deletedAt: null,
+          history: { create: { actorId: actor.sub, label: 'Ticket restored' } },
+        },
+      });
+      return { success: true };
+    });
+  }
+
+  async permanentlyRemove(id: string) {
+    const assets = await this.prisma.$transaction(async (tx) => {
+      const ticket = await tx.ticket.findFirst({
+        where: { id, deletedAt: { not: null } },
+        select: { id: true },
+      });
+      if (!ticket) throw new NotFoundException('Archived ticket not found.');
+      const [workImages, feedbackImages] = await Promise.all([
+        tx.workImage.findMany({
+          where: { maintenanceRecord: { ticketId: id } },
+          select: { fileAssetId: true },
+        }),
+        tx.feedbackImage.findMany({
+          where: { feedback: { ticketId: id } },
+          select: { fileAssetId: true },
+        }),
+      ]);
+      await tx.workImage.deleteMany({
+        where: { maintenanceRecord: { ticketId: id } },
+      });
+      await tx.feedbackImage.deleteMany({
+        where: { feedback: { ticketId: id } },
+      });
+      const requests = await tx.equipmentRequest.findMany({
+        where: { ticketId: id },
+        select: { id: true },
+      });
+      await tx.appNotification.deleteMany({
+        where: {
+          OR: [
+            { entityType: NotificationEntity.TICKET, entityId: id },
+            {
+              entityType: NotificationEntity.REQUEST,
+              entityId: { in: requests.map(({ id }) => id) },
+            },
+          ],
+        },
+      });
+      await tx.ticket.delete({ where: { id } });
+      return this.storage.deleteFileAssetRecords(tx, [
+        ...workImages.map(({ fileAssetId }) => fileAssetId),
+        ...feedbackImages.map(({ fileAssetId }) => fileAssetId),
+      ]);
+    });
+    await this.storage.removeStoredAssets(assets);
+    return { success: true };
   }
 
   async create(dto: CreateTicketDto, actor: AuthUser) {
@@ -432,8 +527,8 @@ export class TicketsService {
   }
 
   private async getForEdit(id: string) {
-    const ticket = await this.prisma.ticket.findUnique({
-      where: { id },
+    const ticket = await this.prisma.ticket.findFirst({
+      where: { id, deletedAt: null },
       include: this.ticketInclude(),
     });
     if (!ticket) throw new NotFoundException('Ticket not found.');

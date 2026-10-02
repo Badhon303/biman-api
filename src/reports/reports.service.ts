@@ -18,6 +18,7 @@ export class ReportsService {
         }),
         this.prisma.ticket.findMany({
           where: {
+            deletedAt: null,
             serviceType: TicketType.BREAKDOWN,
             status: 'CLOSED',
             closedDate: { gte: since },
@@ -26,6 +27,7 @@ export class ReportsService {
         }),
         this.prisma.ticket.findMany({
           where: {
+            deletedAt: null,
             serviceType: {
               in: [
                 TicketType.F_SERVICE,
@@ -79,7 +81,7 @@ export class ReportsService {
       return {
         breakdowns: summary.breakdowns,
         assignedTickets: await this.prisma.ticket.count({
-          where: { assignedEngineerId: user.sub },
+          where: { assignedEngineerId: user.sub, deletedAt: null },
         }),
       };
     if (user.role === 'Biman Admin')

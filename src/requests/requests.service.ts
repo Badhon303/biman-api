@@ -70,8 +70,8 @@ export class RequestsService {
   }
 
   async create(dto: CreateRequestDto, actor: AuthUser) {
-    const ticket = await this.prisma.ticket.findUnique({
-      where: { id: dto.ticketId },
+    const ticket = await this.prisma.ticket.findFirst({
+      where: { id: dto.ticketId, deletedAt: null },
       include: { equipment: { select: { id: true, assetNo: true } } },
     });
     if (!ticket) throw new NotFoundException('Ticket not found.');

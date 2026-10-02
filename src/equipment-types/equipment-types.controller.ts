@@ -27,6 +27,24 @@ export class EquipmentTypesController {
     return this.equipmentTypes.list(search);
   }
 
+  @Get('archive')
+  @Roles('Super Admin', 'Manager')
+  archive() {
+    return this.equipmentTypes.archive();
+  }
+
+  @Post(':id/restore')
+  @Roles('Super Admin', 'Manager')
+  restore(@Param('id') id: string) {
+    return this.equipmentTypes.restore(id);
+  }
+
+  @Delete(':id/permanent')
+  @Roles('Super Admin', 'Manager')
+  permanentlyRemove(@Param('id') id: string) {
+    return this.equipmentTypes.permanentlyRemove(id);
+  }
+
   @Get(':id')
   get(@Param('id') id: string) {
     return this.equipmentTypes.get(id);

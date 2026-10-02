@@ -310,6 +310,7 @@ model Ticket {
   downtimeHours      Float?                @map("downtime_hours")
   createdAt          DateTime              @default(now()) @map("created_at")
   updatedAt          DateTime              @updatedAt @map("updated_at")
+  deletedAt          DateTime?             @map("deleted_at")
   equipment          Equipment             @relation(fields: [equipmentId], references: [id], onDelete: Restrict)
   pmService          EquipmentTypeService? @relation(fields: [pmServiceId], references: [id], onDelete: Restrict)
   createdBy          User                  @relation("TicketCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)

@@ -159,4 +159,51 @@ export class EquipmentTypesService {
     });
     return { success: true };
   }
+
+  archive() {
+    return this.prisma.equipmentType.findMany({
+      where: { deletedAt: { not: null } },
+      orderBy: { deletedAt: 'desc' },
+      include: {
+        services: { orderBy: { sortOrder: 'asc' } },
+        _count: { select: { equipment: true } },
+      },
+    });
+  }
+
+  async restore(id: string) {
+    const item = await this.prisma.equipmentType.findFirst({
+      where: { id, deletedAt: { not: null } },
+    });
+    if (!item)
+      throw new NotFoundException('Archived equipment type not found.');
+    await this.prisma.equipmentType.update({
+      where: { id },
+      data: { deletedAt: null },
+    });
+    return { success: true };
+  }
+
+  async permanentlyRemove(id: string) {
+    const item = await this.prisma.equipmentType.findFirst({
+      where: { id, deletedAt: { not: null } },
+      select: { id: true },
+    });
+    if (!item)
+      throw new NotFoundException('Archived equipment type not found.');
+    try {
+      await this.prisma.equipmentType.delete({ where: { id } });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2003'
+      ) {
+        throw new ConflictException(
+          'Remove linked equipment and service records before permanently deleting this type.',
+        );
+      }
+      throw error;
+    }
+    return { success: true };
+  }
 }

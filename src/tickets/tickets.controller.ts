@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -124,6 +125,30 @@ export class TicketsController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.tickets.returnToEngineer(id, dto.reason, user);
+  }
+
+  @Delete(':id')
+  @Roles('Super Admin', 'Manager')
+  remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.tickets.remove(id, user);
+  }
+
+  @Get('archive')
+  @Roles('Super Admin', 'Manager')
+  archive() {
+    return this.tickets.archive();
+  }
+
+  @Post(':id/restore')
+  @Roles('Super Admin', 'Manager')
+  restore(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.tickets.restore(id, user);
+  }
+
+  @Delete(':id/permanent')
+  @Roles('Super Admin', 'Manager')
+  permanentlyRemove(@Param('id') id: string) {
+    return this.tickets.permanentlyRemove(id);
   }
 
   @Get(':id')

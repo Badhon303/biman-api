@@ -61,9 +61,8 @@ export class StorageController {
   }
 
   @Delete(':id')
-  @Roles('Super Admin', 'Manager')
-  deleteDocument(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    return this.storage.deleteEquipmentDocument(id, user);
+  deleteFile(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.storage.deleteFile(id, user);
   }
 
   @Post(':id/attach')
