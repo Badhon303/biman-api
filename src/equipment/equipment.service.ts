@@ -17,6 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/current-user.decorator';
 import { NotificationPublisher } from '../notifications/notification-publisher.service';
 import { StorageService } from '../storage/storage.service';
+import { SchedulesService } from '../maintenance-schedules/schedules.service';
 import { crossedHourBands } from './service-check.logic';
 import {
   ChecklistTemplate,
@@ -47,6 +48,7 @@ export class EquipmentService {
     private readonly prisma: PrismaService,
     private readonly notificationPublisher: NotificationPublisher,
     private readonly storage: StorageService,
+    private readonly schedules: SchedulesService,
   ) {}
 
   async list(
@@ -132,6 +134,9 @@ export class EquipmentService {
         status: equipmentStatus[dto.status ?? 'Available'],
         hourMeter: dto.hourMeter ?? 0,
         actualGtDate: dto.actualGtDate ? new Date(dto.actualGtDate) : undefined,
+        lastVServiceDate: dto.lastVServiceDate
+          ? new Date(dto.lastVServiceDate)
+          : undefined,
         shipDate: dto.shipDate ? new Date(dto.shipDate) : undefined,
         shippingStatus: dto.shippingStatus,
         emissionRating: dto.emissionRating,
@@ -150,12 +155,21 @@ export class EquipmentService {
       },
       include: this.includeEquipment(),
     });
+    if (item.lastVServiceDate)
+      await this.schedules.ensureInitialSchedule(item.id);
     return this.serialize(item);
   }
 
   async update(id: string, dto: UpdateEquipmentDto) {
     await this.getRaw(id);
-    const { specifications, actualGtDate, shipDate, status, ...fields } = dto;
+    const {
+      specifications,
+      actualGtDate,
+      lastVServiceDate,
+      shipDate,
+      status,
+      ...fields
+    } = dto;
     const item = await this.prisma.$transaction(async (tx) => {
       if (specifications)
         await tx.equipmentSpecification.deleteMany({
@@ -169,6 +183,13 @@ export class EquipmentService {
           ...(actualGtDate !== undefined
             ? { actualGtDate: actualGtDate ? new Date(actualGtDate) : null }
             : {}),
+          ...(lastVServiceDate !== undefined
+            ? {
+                lastVServiceDate: lastVServiceDate
+                  ? new Date(lastVServiceDate)
+                  : null,
+              }
+            : {}),
           ...(shipDate !== undefined
             ? { shipDate: shipDate ? new Date(shipDate) : null }
             : {}),
@@ -179,6 +200,8 @@ export class EquipmentService {
         include: this.includeEquipment(),
       });
     });
+    if (lastVServiceDate !== undefined || dto.equipmentTypeId !== undefined)
+      await this.schedules.ensureInitialSchedule(id);
     return this.serialize(item);
   }
 
@@ -272,33 +295,49 @@ export class EquipmentService {
     await this.assertEngineerEquipmentAccess(id, actor);
     if (value < equipment.hourMeter)
       throw new BadRequestException('Hour meter values must not decrease.');
-    if (value === equipment.hourMeter)
-      throw new BadRequestException(
-        'Enter a value greater than the current meter reading.',
-      );
-    try {
-      await this.prisma.$transaction(async (tx) => {
-        const changed = await tx.equipment.updateMany({
-          where: { id, hourMeter: equipment.hourMeter, deletedAt: null },
-          data: { hourMeter: value },
+    if (value !== equipment.hourMeter) {
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          const changed = await tx.equipment.updateMany({
+            where: { id, hourMeter: equipment.hourMeter, deletedAt: null },
+            data: { hourMeter: value },
+          });
+          if (changed.count !== 1)
+            throw new ConflictException(
+              'Equipment meter was updated by another request. Retry.',
+            );
+          await tx.hourMeterReading.create({
+            data: { equipmentId: id, value, recordedByUserId: actor.sub },
+          });
         });
-        if (changed.count !== 1)
-          throw new ConflictException(
-            'Equipment meter was updated by another request. Retry.',
-          );
-        await tx.hourMeterReading.create({
-          data: { equipmentId: id, value, recordedByUserId: actor.sub },
-        });
-      });
-    } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2025'
-      ) {
-        throw new NotFoundException('Equipment not found.');
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2025'
+        ) {
+          throw new NotFoundException('Equipment not found.');
+        }
+        throw error;
       }
-      throw error;
     }
+    const services = await this.prisma.equipmentTypeService.findMany({
+      where: {
+        equipmentTypeId: equipment.equipmentTypeId,
+        kind: { not: ServiceKind.V_SERVICE },
+      },
+      select: { id: true },
+    });
+    const dueDate = new Date().toISOString();
+    const serviceCheck = await this.serviceCheck(
+      id,
+      {
+        dueDateByServiceId: Object.fromEntries(
+          services.map(({ id: serviceId }) => [serviceId, dueDate]),
+        ),
+      },
+      actor,
+      value === equipment.hourMeter ? undefined : equipment.hourMeter,
+    );
     const reading = await this.prisma.hourMeterReading.findFirst({
       where: { equipmentId: id },
       orderBy: { recordedAt: 'desc' },
@@ -307,6 +346,7 @@ export class EquipmentService {
     return {
       id,
       hourMeter: value,
+      serviceTicketsCreated: serviceCheck.created.length,
       reading: reading
         ? {
             id: reading.id,
@@ -318,7 +358,12 @@ export class EquipmentService {
     };
   }
 
-  async serviceCheck(id: string, dto: ServiceCheckDto, actor: AuthUser) {
+  async serviceCheck(
+    id: string,
+    dto: ServiceCheckDto,
+    actor: AuthUser,
+    previousValueOverride?: number,
+  ) {
     const equipment = await this.getRaw(id);
     await this.assertEngineerEquipmentAccess(id, actor);
     const { name: equipmentTypeName } =
@@ -333,12 +378,15 @@ export class EquipmentService {
       },
       orderBy: { minHours: 'asc' },
     });
-    const readings = await this.prisma.hourMeterReading.findMany({
-      where: { equipmentId: id },
-      orderBy: { recordedAt: 'desc' },
-      take: 2,
-    });
-    const previousValue = readings[1]?.value ?? 0;
+    const readings =
+      previousValueOverride === undefined
+        ? await this.prisma.hourMeterReading.findMany({
+            where: { equipmentId: id },
+            orderBy: { recordedAt: 'desc' },
+            take: 2,
+          })
+        : [];
+    const previousValue = previousValueOverride ?? readings[1]?.value ?? 0;
     const checked = await this.prisma.serviceCheck.findMany({
       where: { equipmentId: id },
     });

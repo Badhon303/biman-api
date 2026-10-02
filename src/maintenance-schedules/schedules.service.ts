@@ -90,6 +90,45 @@ export class SchedulesService {
     return { ...schedule, status: scheduleStatusLabel[schedule.status] };
   }
 
+  async ensureInitialSchedule(equipmentId: string) {
+    const equipment = await this.prisma.equipment.findFirst({
+      where: { id: equipmentId, deletedAt: null },
+      include: { equipmentType: { include: { services: true } } },
+    });
+    if (
+      !equipment?.lastVServiceDate ||
+      !equipment.equipmentType.services.some(
+        (service) =>
+          service.kind === ServiceKind.V_SERVICE && service.months === 6,
+      )
+    ) {
+      return;
+    }
+    const lastDate = equipment.lastVServiceDate;
+    const existing = await this.prisma.maintenanceSchedule.findFirst({
+      where: { equipmentId },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!existing) {
+      await this.create({ equipmentId, lastDate: lastDate.toISOString() });
+      return;
+    }
+    if (existing.ticketId || existing.lastDate.getTime() === lastDate.getTime())
+      return;
+    const dueDate = addMonthsClamped(lastDate, 6);
+    await this.prisma.maintenanceSchedule.update({
+      where: { id: existing.id },
+      data: {
+        lastDate,
+        dueDate,
+        status: scheduleStatusFor(dueDate),
+      },
+    });
+    if (isScheduleDue(dueDate, new Date())) {
+      await this.createDueTicket(existing.id, equipment, dueDate);
+    }
+  }
+
   @Cron('0 */10 * * * *')
   async processDueSchedules() {
     const now = new Date();

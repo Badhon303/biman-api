@@ -190,6 +190,7 @@ model Equipment {
   hourMeter          Float                    @default(0) @map("hour_meter")
   lastServiceCheckAt DateTime?                @map("last_service_check_at")
   actualGtDate       DateTime?                @map("actual_gt_date")
+  lastVServiceDate   DateTime?                @map("last_v_service_date")
   shipDate           DateTime?                @map("ship_date")
   shippingStatus     String?                  @map("shipping_status")
   emissionRating     String?                  @map("emission_rating")

@@ -13,6 +13,12 @@ describe('crossedHourBands', () => {
     ).toEqual(['f', 'b', 'custom']);
   });
 
+  it('includes a threshold equal to the current meter reading', () => {
+    expect(
+      crossedHourBands(services, 250, 500, new Set()).map((item) => item.id),
+    ).toEqual(['f']);
+  });
+
   it('does not include the previous value or an unchecked future band', () => {
     expect(
       crossedHourBands(services, 500, 900, new Set()).map((item) => item.id),

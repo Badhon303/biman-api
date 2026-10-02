@@ -459,6 +459,10 @@ export class TicketsService {
         include: this.ticketInclude(),
       });
       if (ticket.serviceType === 'V_SERVICE') {
+        await tx.equipment.update({
+          where: { id: ticket.equipmentId },
+          data: { lastVServiceDate: closedAt },
+        });
         const dueDate = addMonthsClamped(closedAt, 6);
         const advanced = await tx.maintenanceSchedule.updateMany({
           where: { ticketId: ticket.id },

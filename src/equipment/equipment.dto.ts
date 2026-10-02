@@ -64,6 +64,10 @@ export class CreateEquipmentDto {
 
   @IsOptional()
   @IsDateString()
+  lastVServiceDate?: string;
+
+  @IsOptional()
+  @IsDateString()
   shipDate?: string;
 
   @IsOptional()
@@ -121,6 +125,10 @@ export class UpdateEquipmentDto {
   @IsOptional()
   @IsDateString()
   actualGtDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  lastVServiceDate?: string;
 
   @IsOptional()
   @IsDateString()
