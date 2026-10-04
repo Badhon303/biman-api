@@ -45,6 +45,11 @@ export class EquipmentTypesController {
     return this.equipmentTypes.permanentlyRemove(id);
   }
 
+  @Get('checklists')
+  checklistCatalog() {
+    return this.equipmentTypes.checklistCatalog();
+  }
+
   @Get(':id')
   get(@Param('id') id: string) {
     return this.equipmentTypes.get(id);

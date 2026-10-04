@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsInt,
   IsNumber,
   IsOptional,
@@ -12,6 +13,21 @@ import {
   ValidateNested,
 } from 'class-validator';
 
+export class ChecklistItemSettingDto {
+  @IsString()
+  category: string;
+
+  @IsString()
+  label: string;
+
+  @IsInt()
+  @Min(0)
+  sortOrder: number;
+
+  @IsBoolean()
+  enabled: boolean;
+}
+
 export class EquipmentTypeServiceDto {
   @IsOptional()
   @IsUUID()
@@ -20,6 +36,12 @@ export class EquipmentTypeServiceDto {
   @IsString()
   @MinLength(2)
   name: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ChecklistItemSettingDto)
+  checklistItems?: ChecklistItemSettingDto[];
 
   @IsOptional()
   @IsNumber()

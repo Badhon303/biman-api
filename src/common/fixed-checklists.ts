@@ -628,7 +628,24 @@ export type ChecklistTemplate = {
   label: string;
   sortOrder: number;
   applicable?: boolean;
+  enabled?: boolean;
 };
+
+export function applyChecklistSettings(
+  templates: ChecklistTemplate[],
+  settings: ChecklistTemplate[],
+): ChecklistTemplate[] {
+  const enabledByItem = new Map(
+    settings.map((item) => [
+      `${item.category}\u0000${item.label}`,
+      item.enabled ?? true,
+    ]),
+  );
+  return templates.map((item) => ({
+    ...item,
+    enabled: enabledByItem.get(`${item.category}\u0000${item.label}`) ?? true,
+  }));
+}
 
 /**
  * Returns the full fixed inspection checklist for an equipment type, with
@@ -655,10 +672,18 @@ export function fixedChecklistFor(
     }));
 }
 
+export function checklistCatalogFor(
+  serviceKind: ServiceKind,
+): ChecklistTemplate[] {
+  return fixedChecklistFor('Push Back', serviceKind) ?? [];
+}
+
 export const toChecklistItems = (templates: ChecklistTemplate[]) =>
-  templates.map(({ category, label, sortOrder, applicable = true }) => ({
-    category,
-    label,
-    sortOrder,
-    applicable,
-  }));
+  templates
+    .filter(({ enabled = true }) => enabled)
+    .map(({ category, label, sortOrder, applicable = true }) => ({
+      category,
+      label,
+      sortOrder,
+      applicable,
+    }));

@@ -3,9 +3,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, ServiceKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { serviceKindFromName } from '../common/enum-mappers';
+import {
+  applyChecklistSettings,
+  checklistCatalogFor,
+  ChecklistTemplate,
+} from '../common/fixed-checklists';
 import {
   CreateEquipmentTypeDto,
   UpdateEquipmentTypeDto,
@@ -34,12 +39,37 @@ export class EquipmentTypesService {
     const item = await this.prisma.equipmentType.findFirst({
       where: { id, deletedAt: null },
       include: {
-        services: { orderBy: { sortOrder: 'asc' } },
+        services: {
+          orderBy: { sortOrder: 'asc' },
+          include: { checklistItems: { orderBy: { sortOrder: 'asc' } } },
+        },
         _count: { select: { equipment: true } },
       },
     });
     if (!item) throw new NotFoundException('Equipment type not found.');
-    return item;
+    return {
+      ...item,
+      services: item.services.map((service) => ({
+        ...service,
+        checklistItems: this.checklistSettingsFor(
+          service.kind,
+          service.checklistItems,
+        ),
+      })),
+    };
+  }
+
+  checklistCatalog() {
+    return Object.fromEntries(
+      Object.values(ServiceKind).map((kind) => [
+        kind,
+        this.checklistSettingsFor(kind, []),
+      ]),
+    );
+  }
+
+  private checklistSettingsFor(kind: ServiceKind, saved: ChecklistTemplate[]) {
+    return applyChecklistSettings(checklistCatalogFor(kind), saved);
   }
 
   async create(dto: CreateEquipmentTypeDto) {
@@ -49,15 +79,25 @@ export class EquipmentTypesService {
         data: {
           name: dto.name,
           services: {
-            create: dto.services.map((service, sortOrder) => ({
-              name: service.name,
-              kind: serviceKindFromName(service.name),
-              minHours: service.minHours,
-              maxHours: service.maxHours,
-              months:
-                serviceKindFromName(service.name) === 'V_SERVICE' ? 6 : null,
-              sortOrder,
-            })),
+            create: dto.services.map((service, sortOrder) => {
+              const kind = serviceKindFromName(service.name);
+              return {
+                name: service.name,
+                kind,
+                checklistItems: service.checklistItems?.length
+                  ? {
+                      create: service.checklistItems.map((item) => ({
+                        ...item,
+                        serviceType: kind,
+                      })),
+                    }
+                  : undefined,
+                minHours: service.minHours,
+                maxHours: service.maxHours,
+                months: kind === ServiceKind.V_SERVICE ? 6 : null,
+                sortOrder,
+              };
+            }),
           },
         },
         include: { services: { orderBy: { sortOrder: 'asc' } } },
@@ -76,7 +116,11 @@ export class EquipmentTypesService {
   }
 
   async update(id: string, dto: UpdateEquipmentTypeDto) {
-    await this.get(id);
+    const item = await this.prisma.equipmentType.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true },
+    });
+    if (!item) throw new NotFoundException('Equipment type not found.');
     if (dto.services) validateServiceBands(dto.services);
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -94,13 +138,13 @@ export class EquipmentTypesService {
                 'Service does not belong to this equipment type.',
               );
             }
+            const kind = serviceKindFromName(service.name);
             const data = {
               name: service.name,
-              kind: serviceKindFromName(service.name),
+              kind,
               minHours: service.minHours,
               maxHours: service.maxHours,
-              months:
-                serviceKindFromName(service.name) === 'V_SERVICE' ? 6 : null,
+              months: kind === ServiceKind.V_SERVICE ? 6 : null,
               sortOrder,
             };
             const saved = existing
@@ -111,6 +155,19 @@ export class EquipmentTypesService {
               : await tx.equipmentTypeService.create({
                   data: { ...data, equipmentTypeId: id },
                 });
+            if (service.checklistItems) {
+              await tx.checklistTemplateItem.deleteMany({
+                where: { equipmentTypeServiceId: saved.id },
+              });
+              if (service.checklistItems.length)
+                await tx.checklistTemplateItem.createMany({
+                  data: service.checklistItems.map((item) => ({
+                    ...item,
+                    serviceType: kind,
+                    equipmentTypeServiceId: saved.id,
+                  })),
+                });
+            }
             retainedIds.push(saved.id);
           }
           await tx.equipmentTypeService.deleteMany({

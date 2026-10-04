@@ -16,6 +16,7 @@ import { NotificationPublisher } from '../notifications/notification-publisher.s
 import { CreateScheduleDto } from './schedules.dto';
 import { scheduleStatusLabel } from '../common/api-serializers';
 import {
+  applyChecklistSettings,
   fixedChecklistFor,
   toChecklistItems,
 } from '../common/fixed-checklists';
@@ -207,7 +208,13 @@ export class SchedulesService {
       where: { ticketId: null, deletedAt: null },
       include: {
         equipment: {
-          include: { equipmentType: { include: { services: true } } },
+          include: {
+            equipmentType: {
+              include: {
+                services: { include: { checklistItems: true } },
+              },
+            },
+          },
         },
       },
     });
@@ -243,18 +250,10 @@ export class SchedulesService {
           where: { id: scheduleId, ticketId: null, deletedAt: null },
         });
         if (!current) return [];
-        const templates =
-          fixedChecklistFor(
-            equipment.equipmentType.name,
-            ServiceKind.V_SERVICE,
-          ) ??
-          (await tx.checklistTemplateItem.findMany({
-            where: {
-              serviceType: ServiceKind.V_SERVICE,
-              equipmentTypeServiceId: null,
-            },
-            orderBy: { sortOrder: 'asc' },
-          }));
+        const templates = applyChecklistSettings(
+          fixedChecklistFor('Push Back', ServiceKind.V_SERVICE) ?? [],
+          vService.checklistItems,
+        );
         const systemActorId = await this.systemActorId(tx);
         const ticket = await tx.ticket.create({
           data: {

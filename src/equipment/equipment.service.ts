@@ -23,7 +23,7 @@ import {
   serviceTicketNotificationData,
 } from './service-check.logic';
 import {
-  ChecklistTemplate,
+  applyChecklistSettings,
   fixedChecklistFor,
   toChecklistItems,
 } from '../common/fixed-checklists';
@@ -369,17 +369,13 @@ export class EquipmentService {
   ) {
     const equipment = await this.getRaw(id);
     await this.assertEngineerEquipmentAccess(id, actor);
-    const { name: equipmentTypeName } =
-      await this.prisma.equipmentType.findUniqueOrThrow({
-        where: { id: equipment.equipmentTypeId },
-        select: { name: true },
-      });
     const services = await this.prisma.equipmentTypeService.findMany({
       where: {
         equipmentTypeId: equipment.equipmentTypeId,
         kind: { not: ServiceKind.V_SERVICE },
       },
       orderBy: { minHours: 'asc' },
+      include: { checklistItems: true },
     });
     const readings =
       previousValueOverride === undefined
@@ -427,27 +423,10 @@ export class EquipmentService {
           )
             .toString()
             .padStart(4, '0')}`;
-          let templates: ChecklistTemplate[] =
-            service.kind === ServiceKind.OTHERS
-              ? await tx.checklistTemplateItem.findMany({
-                  where: {
-                    serviceType: service.kind,
-                    equipmentTypeServiceId: service.id,
-                  },
-                  orderBy: { sortOrder: 'asc' },
-                })
-              : [];
-          if (!templates.length)
-            templates =
-              fixedChecklistFor(equipmentTypeName, service.kind) ?? [];
-          if (!templates.length)
-            templates = await tx.checklistTemplateItem.findMany({
-              where: {
-                serviceType: service.kind,
-                equipmentTypeServiceId: null,
-              },
-              orderBy: { sortOrder: 'asc' },
-            });
+          const templates = applyChecklistSettings(
+            fixedChecklistFor('Push Back', service.kind) ?? [],
+            service.checklistItems,
+          );
           const ticket = await tx.ticket.create({
             data: {
               ticketNo,

@@ -158,9 +158,10 @@ model EquipmentType {
 model EquipmentTypeService {
   id              String                  @id @default(uuid()) @db.Uuid
   equipmentTypeId String                  @map("equipment_type_id") @db.Uuid
-  name            String
-  kind            ServiceKind
-  minHours        Float?                  @map("min_hours")
+  name             String
+  kind             ServiceKind
+  checklistEnabled Boolean                 @default(true) @map("checklist_enabled")
+  minHours         Float?                  @map("min_hours")
   maxHours        Float?                  @map("max_hours")
   months          Int?
   sortOrder       Int                     @default(0) @map("sort_order")
@@ -287,6 +288,7 @@ model ChecklistTemplateItem {
   equipmentTypeServiceId String?               @map("equipment_type_service_id") @db.Uuid
   category               String
   label                  String
+  enabled                Boolean               @default(true)
   sortOrder              Int                   @default(0) @map("sort_order")
   equipmentTypeService   EquipmentTypeService? @relation(fields: [equipmentTypeServiceId], references: [id], onDelete: Cascade)
 

@@ -1,7 +1,10 @@
 import { ServiceKind } from '@prisma/client';
 import {
+  applyChecklistSettings,
+  checklistCatalogFor,
   FIXED_CHECKLIST_EQUIPMENT_TYPES,
   fixedChecklistFor,
+  toChecklistItems,
 } from './fixed-checklists';
 
 const labels = (type: string, kind: ServiceKind) =>
@@ -63,6 +66,45 @@ describe('fixedChecklistFor', () => {
     ['Passenger Steps', ServiceKind.V_SERVICE, 39],
   ])('%s %s has %i items', (type, kind, count) => {
     expect(labels(type, kind)).toHaveLength(count);
+  });
+
+  it('uses the same full parts catalog for every equipment type', () => {
+    for (const kind of Object.values(ServiceKind)) {
+      expect(checklistCatalogFor(kind)).toEqual(
+        fixedChecklistFor('Push Back', kind),
+      );
+      expect(checklistCatalogFor(kind)).toHaveLength(76);
+    }
+  });
+
+  it('applies per-item settings while leaving other items enabled by default', () => {
+    const templates = fixedChecklistFor('Push Back', ServiceKind.F_SERVICE)!;
+    const target = templates.find(({ label }) => label === 'Wiper')!;
+    const configured = applyChecklistSettings(templates, [
+      { ...target, sortOrder: 99, enabled: false },
+    ]);
+    expect(configured.find(({ label }) => label === 'Wiper')?.enabled).toBe(
+      false,
+    );
+    expect(
+      configured.find(({ label }) => label === 'Door 4 side')?.enabled,
+    ).toBe(true);
+  });
+
+  it('omits disabled parts when creating ticket checklist items', () => {
+    expect(
+      toChecklistItems([
+        { category: 'Body Work', label: 'Wiper', sortOrder: 0, enabled: false },
+        { category: 'Body Work', label: 'Door 4 side', sortOrder: 1 },
+      ]),
+    ).toEqual([
+      {
+        category: 'Body Work',
+        label: 'Door 4 side',
+        sortOrder: 1,
+        applicable: true,
+      },
+    ]);
   });
 
   it('keeps every part but marks shaded parts as not applicable', () => {
