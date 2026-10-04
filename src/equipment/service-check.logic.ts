@@ -1,4 +1,4 @@
-import { EquipmentTypeService } from '@prisma/client';
+import { EquipmentTypeService, NotificationEntity } from '@prisma/client';
 
 export type HourBand = Pick<
   EquipmentTypeService,
@@ -21,4 +21,20 @@ export function crossedHourBands<T extends HourBand>(
       !checkedKeys.has(`${service.id}:${threshold}`)
     );
   });
+}
+
+export function serviceTicketNotificationData(
+  tickets: { id: string; ticketNo: string }[],
+  recipients: { id: string }[],
+  assetNo: string,
+) {
+  return tickets.flatMap((ticket) =>
+    recipients.map(({ id: userId }) => ({
+      userId,
+      type: 'Ticket created',
+      message: `${ticket.ticketNo} was generated for ${assetNo} after an hour-meter service threshold was crossed.`,
+      entityType: NotificationEntity.TICKET,
+      entityId: ticket.id,
+    })),
+  );
 }

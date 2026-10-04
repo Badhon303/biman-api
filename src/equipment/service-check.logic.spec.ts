@@ -1,4 +1,8 @@
-import { crossedHourBands } from './service-check.logic';
+import { NotificationEntity } from '@prisma/client';
+import {
+  crossedHourBands,
+  serviceTicketNotificationData,
+} from './service-check.logic';
 
 describe('crossedHourBands', () => {
   const services = [
@@ -31,5 +35,51 @@ describe('crossedHourBands', () => {
         (item) => item.id,
       ),
     ).toEqual(['f', 'custom']);
+  });
+
+  it('creates one ticket-linked notification per generated ticket and recipient', () => {
+    expect(
+      serviceTicketNotificationData(
+        [
+          { id: 'ticket-1', ticketNo: 'TKT-1' },
+          { id: 'ticket-2', ticketNo: 'TKT-2' },
+        ],
+        [{ id: 'admin-1' }, { id: 'manager-1' }],
+        'EQ-1',
+      ),
+    ).toEqual([
+      {
+        userId: 'admin-1',
+        type: 'Ticket created',
+        message:
+          'TKT-1 was generated for EQ-1 after an hour-meter service threshold was crossed.',
+        entityType: NotificationEntity.TICKET,
+        entityId: 'ticket-1',
+      },
+      {
+        userId: 'manager-1',
+        type: 'Ticket created',
+        message:
+          'TKT-1 was generated for EQ-1 after an hour-meter service threshold was crossed.',
+        entityType: NotificationEntity.TICKET,
+        entityId: 'ticket-1',
+      },
+      {
+        userId: 'admin-1',
+        type: 'Ticket created',
+        message:
+          'TKT-2 was generated for EQ-1 after an hour-meter service threshold was crossed.',
+        entityType: NotificationEntity.TICKET,
+        entityId: 'ticket-2',
+      },
+      {
+        userId: 'manager-1',
+        type: 'Ticket created',
+        message:
+          'TKT-2 was generated for EQ-1 after an hour-meter service threshold was crossed.',
+        entityType: NotificationEntity.TICKET,
+        entityId: 'ticket-2',
+      },
+    ]);
   });
 });

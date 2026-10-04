@@ -18,7 +18,10 @@ import { AuthUser } from '../common/current-user.decorator';
 import { NotificationPublisher } from '../notifications/notification-publisher.service';
 import { StorageService } from '../storage/storage.service';
 import { SchedulesService } from '../maintenance-schedules/schedules.service';
-import { crossedHourBands } from './service-check.logic';
+import {
+  crossedHourBands,
+  serviceTicketNotificationData,
+} from './service-check.logic';
 import {
   ChecklistTemplate,
   fixedChecklistFor,
@@ -490,13 +493,11 @@ export class EquipmentService {
           select: { id: true },
         });
         const notifications = await tx.appNotification.createManyAndReturn({
-          data: recipients.map(({ id: userId }) => ({
-            userId,
-            type: 'Service threshold crossed',
-            message: `${equipment.assetNo} crossed ${created.length} maintenance service band(s).`,
-            entityType: NotificationEntity.EQUIPMENT,
-            entityId: id,
-          })),
+          data: serviceTicketNotificationData(
+            created,
+            recipients,
+            equipment.assetNo,
+          ),
         });
         await tx.equipment.update({
           where: { id },
