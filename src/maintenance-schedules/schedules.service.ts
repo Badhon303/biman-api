@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -34,6 +35,7 @@ export class SchedulesService {
   list() {
     return this.prisma.maintenanceSchedule
       .findMany({
+        where: { deletedAt: null },
         include: {
           equipment: {
             select: {
@@ -52,6 +54,74 @@ export class SchedulesService {
           status: scheduleStatusLabel[item.status],
         })),
       );
+  }
+
+  archive() {
+    return this.prisma.maintenanceSchedule
+      .findMany({
+        where: { deletedAt: { not: null } },
+        orderBy: { deletedAt: 'desc' },
+        include: {
+          equipment: {
+            select: {
+              id: true,
+              assetNo: true,
+              equipmentType: { select: { name: true } },
+            },
+          },
+          ticket: { select: { id: true, ticketNo: true, status: true } },
+        },
+      })
+      .then((items) =>
+        items.map((item) => ({
+          ...item,
+          status: scheduleStatusLabel[item.status],
+        })),
+      );
+  }
+
+  async remove(id: string) {
+    const archived = await this.prisma.maintenanceSchedule.updateMany({
+      where: { id, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (archived.count !== 1)
+      throw new NotFoundException('Schedule not found.');
+    return { success: true };
+  }
+
+  async restore(id: string) {
+    const schedule = await this.prisma.maintenanceSchedule.findFirst({
+      where: { id, deletedAt: { not: null } },
+      select: { id: true, equipment: { select: { deletedAt: true } } },
+    });
+    if (!schedule) throw new NotFoundException('Archived schedule not found.');
+    if (schedule.equipment.deletedAt)
+      throw new ConflictException('Restore the equipment first.');
+    await this.prisma.maintenanceSchedule.update({
+      where: { id },
+      data: { deletedAt: null },
+    });
+    return { success: true };
+  }
+
+  async permanentlyRemove(id: string) {
+    await this.prisma.$transaction(async (tx) => {
+      const schedule = await tx.maintenanceSchedule.findFirst({
+        where: { id, deletedAt: { not: null } },
+        select: { id: true },
+      });
+      if (!schedule)
+        throw new NotFoundException('Archived schedule not found.');
+      await tx.appNotification.deleteMany({
+        where: {
+          entityType: NotificationEntity.SCHEDULE,
+          entityId: id,
+        },
+      });
+      await tx.maintenanceSchedule.delete({ where: { id } });
+    });
+    return { success: true };
   }
 
   async create(dto: CreateScheduleDto) {
@@ -113,6 +183,7 @@ export class SchedulesService {
       await this.create({ equipmentId, lastDate: lastDate.toISOString() });
       return;
     }
+    if (existing.deletedAt) return;
     if (existing.ticketId || existing.lastDate.getTime() === lastDate.getTime())
       return;
     const dueDate = addMonthsClamped(lastDate, 6);
@@ -133,7 +204,7 @@ export class SchedulesService {
   async processDueSchedules() {
     const now = new Date();
     const schedules = await this.prisma.maintenanceSchedule.findMany({
-      where: { ticketId: null },
+      where: { ticketId: null, deletedAt: null },
       include: {
         equipment: {
           include: { equipmentType: { include: { services: true } } },
@@ -169,7 +240,7 @@ export class SchedulesService {
     const notifications = await this.prisma.$transaction(
       async (tx) => {
         const current = await tx.maintenanceSchedule.findFirst({
-          where: { id: scheduleId, ticketId: null },
+          where: { id: scheduleId, ticketId: null, deletedAt: null },
         });
         if (!current) return [];
         const templates =
