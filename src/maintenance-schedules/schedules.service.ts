@@ -17,7 +17,7 @@ import { CreateScheduleDto } from './schedules.dto';
 import { scheduleStatusLabel } from '../common/api-serializers';
 import {
   applyChecklistSettings,
-  fixedChecklistFor,
+  checklistCatalogFor,
   toChecklistItems,
 } from '../common/fixed-checklists';
 import {
@@ -47,7 +47,7 @@ export class SchedulesService {
           },
           ticket: { select: { id: true, ticketNo: true, status: true } },
         },
-        orderBy: { dueDate: 'asc' },
+        orderBy: { createdAt: 'desc' },
       })
       .then((items) =>
         items.map((item) => ({
@@ -157,11 +157,14 @@ export class SchedulesService {
       schedule = await this.prisma.maintenanceSchedule.findUniqueOrThrow({
         where: { id: schedule.id },
       });
+    } else {
+      await this.notifySchedule(schedule, equipment.assetNo);
     }
     return { ...schedule, status: scheduleStatusLabel[schedule.status] };
   }
 
   async ensureInitialSchedule(equipmentId: string) {
+    const none = { ticketCreated: false, scheduleCreated: false };
     const equipment = await this.prisma.equipment.findFirst({
       where: { id: equipmentId, deletedAt: null },
       include: { equipmentType: { include: { services: true } } },
@@ -173,7 +176,7 @@ export class SchedulesService {
           service.kind === ServiceKind.V_SERVICE && service.months === 6,
       )
     ) {
-      return;
+      return none;
     }
     const lastDate = equipment.lastVServiceDate;
     const existing = await this.prisma.maintenanceSchedule.findFirst({
@@ -181,12 +184,18 @@ export class SchedulesService {
       orderBy: { createdAt: 'desc' },
     });
     if (!existing) {
-      await this.create({ equipmentId, lastDate: lastDate.toISOString() });
-      return;
+      const schedule = await this.create({
+        equipmentId,
+        lastDate: lastDate.toISOString(),
+      });
+      return {
+        ticketCreated: Boolean(schedule.ticketId),
+        scheduleCreated: true,
+      };
     }
-    if (existing.deletedAt) return;
+    if (existing.deletedAt) return none;
     if (existing.ticketId || existing.lastDate.getTime() === lastDate.getTime())
-      return;
+      return none;
     const dueDate = addMonthsClamped(lastDate, 6);
     await this.prisma.maintenanceSchedule.update({
       where: { id: existing.id },
@@ -196,9 +205,39 @@ export class SchedulesService {
         status: scheduleStatusFor(dueDate),
       },
     });
-    if (isScheduleDue(dueDate, new Date())) {
-      await this.createDueTicket(existing.id, equipment, dueDate);
-    }
+    return {
+      ticketCreated: isScheduleDue(dueDate, new Date())
+        ? await this.createDueTicket(existing.id, equipment, dueDate)
+        : false,
+      scheduleCreated: false,
+    };
+  }
+
+  private async notifySchedule(
+    schedule: { id: string; scheduleNo: string; dueDate: Date },
+    assetNo: string,
+  ) {
+    const recipients = await this.prisma.user.findMany({
+      where: {
+        status: 'ACTIVE',
+        deletedAt: null,
+        role: { in: [Role.SUPER_ADMIN, Role.MANAGER] },
+      },
+      select: { id: true },
+    });
+    if (!recipients.length) return;
+    const notifications = await this.prisma.appNotification.createManyAndReturn(
+      {
+        data: recipients.map(({ id }) => ({
+          userId: id,
+          type: 'V-Service schedule created',
+          message: `${schedule.scheduleNo} was created for ${assetNo}. Next V-Service is due ${schedule.dueDate.toISOString().slice(0, 10)}.`,
+          entityType: NotificationEntity.SCHEDULE,
+          entityId: schedule.id,
+        })),
+      },
+    );
+    await this.notificationPublisher.dispatch(notifications);
   }
 
   @Cron('0 */10 * * * *')
@@ -239,19 +278,19 @@ export class SchedulesService {
     scheduleId: string,
     equipment: any,
     dueDate: Date,
-  ) {
+  ): Promise<boolean> {
     const vService = equipment.equipmentType.services.find(
       (service) => service.kind === ServiceKind.V_SERVICE,
     );
-    if (!vService) return;
-    const notifications = await this.prisma.$transaction(
+    if (!vService) return false;
+    const result = await this.prisma.$transaction(
       async (tx) => {
         const current = await tx.maintenanceSchedule.findFirst({
           where: { id: scheduleId, ticketId: null, deletedAt: null },
         });
-        if (!current) return [];
+        if (!current) return { notifications: [], ticketCreated: false };
         const templates = applyChecklistSettings(
-          fixedChecklistFor('Push Back', ServiceKind.V_SERVICE) ?? [],
+          checklistCatalogFor(ServiceKind.V_SERVICE),
           vService.checklistItems,
         );
         const systemActorId = await this.systemActorId(tx);
@@ -290,20 +329,23 @@ export class SchedulesService {
           },
           select: { id: true },
         });
-        if (!recipients.length) return [];
-        return tx.appNotification.createManyAndReturn({
-          data: recipients.map(({ id }) => ({
-            userId: id,
-            type: 'V-Service ticket generated',
-            message: `${ticket.ticketNo} was generated for ${equipment.assetNo} because its V-Service is due.`,
-            entityType: NotificationEntity.TICKET,
-            entityId: ticket.id,
-          })),
-        });
+        const notifications = recipients.length
+          ? await tx.appNotification.createManyAndReturn({
+              data: recipients.map(({ id }) => ({
+                userId: id,
+                type: 'V-Service ticket generated',
+                message: `${ticket.ticketNo} was generated for ${equipment.assetNo} because its V-Service is due.`,
+                entityType: NotificationEntity.TICKET,
+                entityId: ticket.id,
+              })),
+            })
+          : [];
+        return { notifications, ticketCreated: true };
       },
       { timeout: 20_000 },
     );
-    await this.notificationPublisher.dispatch(notifications);
+    await this.notificationPublisher.dispatch(result.notifications);
+    return result.ticketCreated;
   }
 
   private async systemActorId(tx: any) {

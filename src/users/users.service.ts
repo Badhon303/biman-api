@@ -209,6 +209,54 @@ export class UsersService {
     return this.serialize(user);
   }
 
+  async archive() {
+    const users = await this.prisma.user.findMany({
+      where: { deletedAt: { not: null } },
+      orderBy: { deletedAt: 'desc' },
+    });
+    return users.map((user) => ({
+      ...this.serialize(user),
+      deletedAt: user.deletedAt,
+    }));
+  }
+
+  async restore(id: string) {
+    const user = await this.prisma.user.findFirst({
+      where: { id, deletedAt: { not: null } },
+      select: { id: true },
+    });
+    if (!user) throw new NotFoundException('Archived user not found.');
+    await this.prisma.user.update({
+      where: { id },
+      data: { deletedAt: null, status: 'ACTIVE' },
+    });
+    return { success: true };
+  }
+
+  async permanentlyRemove(id: string) {
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const user = await tx.user.findFirst({
+          where: { id, deletedAt: { not: null } },
+          select: { id: true },
+        });
+        if (!user) throw new NotFoundException('Archived user not found.');
+        await tx.user.delete({ where: { id } });
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2003'
+      ) {
+        throw new ConflictException(
+          'This user is referenced by historical or operational records and cannot be permanently deleted.',
+        );
+      }
+      throw error;
+    }
+    return { success: true };
+  }
+
   async remove(id: string) {
     const user = await this.prisma.user.findFirst({
       where: { id, deletedAt: null },

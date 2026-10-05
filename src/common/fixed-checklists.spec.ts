@@ -91,6 +91,25 @@ describe('fixedChecklistFor', () => {
     ).toBe(true);
   });
 
+  it('enables every checklist item by default for each service kind', () => {
+    for (const kind of Object.values(ServiceKind)) {
+      const templates = checklistCatalogFor(kind);
+      const defaults = applyChecklistSettings(templates, []);
+      expect(defaults.filter(({ enabled }) => enabled)).toHaveLength(76);
+      expect(toChecklistItems(defaults)).toHaveLength(76);
+    }
+  });
+
+  it('preserves explicit per-item settings', () => {
+    const b = fixedChecklistFor('Push Back', ServiceKind.B_SERVICE)!;
+    const fuel = b.find(({ label }) => label === 'Fuel filter')!;
+    const saved = applyChecklistSettings(b, [{ ...fuel, enabled: false }]);
+    expect(saved.find(({ label }) => label === 'Fuel filter')?.enabled).toBe(
+      false,
+    );
+    expect(toChecklistItems(saved)).toHaveLength(75);
+  });
+
   it('omits disabled parts when creating ticket checklist items', () => {
     expect(
       toChecklistItems([

@@ -19,12 +19,12 @@ import { NotificationPublisher } from '../notifications/notification-publisher.s
 import { StorageService } from '../storage/storage.service';
 import { SchedulesService } from '../maintenance-schedules/schedules.service';
 import {
-  crossedHourBands,
+  initialHourBands,
   serviceTicketNotificationData,
 } from './service-check.logic';
 import {
   applyChecklistSettings,
-  fixedChecklistFor,
+  checklistCatalogFor,
   toChecklistItems,
 } from '../common/fixed-checklists';
 import { PaginationDto } from '../common/pagination.dto';
@@ -86,7 +86,7 @@ export class EquipmentService {
         where,
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: { assetNo: query.order ?? 'asc' },
+        orderBy: { createdAt: query.order ?? 'desc' },
         include: this.includeEquipment(),
       }),
       this.prisma.equipment.count({ where }),
@@ -158,9 +158,36 @@ export class EquipmentService {
       },
       include: this.includeEquipment(),
     });
-    if (item.lastVServiceDate)
-      await this.schedules.ensureInitialSchedule(item.id);
-    return this.serialize(item);
+    const vService = item.lastVServiceDate
+      ? await this.schedules.ensureInitialSchedule(item.id)
+      : { ticketCreated: false, scheduleCreated: false };
+    const services = await this.prisma.equipmentTypeService.findMany({
+      where: {
+        equipmentTypeId: item.equipmentTypeId,
+        kind: { not: ServiceKind.V_SERVICE },
+      },
+      select: { id: true, minHours: true, maxHours: true },
+    });
+    const bands = initialHourBands(services, item.hourMeter, new Set());
+    const dueDate = new Date().toISOString();
+    const hourCheck = bands.length
+      ? await this.serviceCheck(
+          item.id,
+          {
+            dueDateByServiceId: Object.fromEntries(
+              bands.map(({ id }) => [id, dueDate]),
+            ),
+          },
+          actor,
+          0,
+        )
+      : { created: [] };
+    return {
+      ...this.serialize(item),
+      serviceTicketsCreated:
+        hourCheck.created.length + Number(vService.ticketCreated),
+      vServiceScheduleCreated: vService.scheduleCreated,
+    };
   }
 
   async update(id: string, dto: UpdateEquipmentDto) {
@@ -394,9 +421,8 @@ export class EquipmentService {
         (item) => `${item.equipmentTypeServiceId}:${item.thresholdHours}`,
       ),
     );
-    const crossed = crossedHourBands(
+    const crossed = initialHourBands(
       services,
-      previousValue,
       equipment.hourMeter,
       checkedKeys,
     );
@@ -415,80 +441,83 @@ export class EquipmentService {
     }
 
     try {
-      const result = await this.prisma.$transaction(async (tx) => {
-        const created = [];
-        for (const service of crossed) {
-          const ticketNo = `TKT-${Date.now()}-${Math.floor(
-            Math.random() * 10000,
-          )
-            .toString()
-            .padStart(4, '0')}`;
-          const templates = applyChecklistSettings(
-            fixedChecklistFor('Push Back', service.kind) ?? [],
-            service.checklistItems,
-          );
-          const ticket = await tx.ticket.create({
-            data: {
-              ticketNo,
-              serviceType: service.kind as TicketType,
-              pmServiceId: service.id,
-              equipmentId: id,
-              priority: 'MEDIUM',
-              status: 'OPEN',
-              dueDate: new Date(dto.dueDateByServiceId[service.id]),
-              createdByUserId: actor.sub,
-              maintenanceRecord: {
-                create: {
-                  checklistItems: { create: toChecklistItems(templates) },
+      const result = await this.prisma.$transaction(
+        async (tx) => {
+          const created = [];
+          for (const service of crossed) {
+            const ticketNo = `TKT-${Date.now()}-${Math.floor(
+              Math.random() * 10000,
+            )
+              .toString()
+              .padStart(4, '0')}`;
+            const templates = applyChecklistSettings(
+              checklistCatalogFor(service.kind),
+              service.checklistItems,
+            );
+            const ticket = await tx.ticket.create({
+              data: {
+                ticketNo,
+                serviceType: service.kind as TicketType,
+                pmServiceId: service.id,
+                equipmentId: id,
+                priority: 'MEDIUM',
+                status: 'OPEN',
+                dueDate: new Date(dto.dueDateByServiceId[service.id]),
+                createdByUserId: actor.sub,
+                maintenanceRecord: {
+                  create: {
+                    checklistItems: { create: toChecklistItems(templates) },
+                  },
+                },
+                history: {
+                  create: {
+                    actorId: actor.sub,
+                    label: 'Ticket created — manual hour-meter service check',
+                  },
+                },
+                serviceCheck: {
+                  create: {
+                    equipmentId: id,
+                    equipmentTypeServiceId: service.id,
+                    thresholdHours: service.threshold,
+                    triggeredByUserId: actor.sub,
+                    previousValue,
+                    currentValue: equipment.hourMeter,
+                  },
                 },
               },
-              history: {
-                create: {
-                  actorId: actor.sub,
-                  label: 'Ticket created — manual hour-meter service check',
-                },
-              },
-              serviceCheck: {
-                create: {
-                  equipmentId: id,
-                  equipmentTypeServiceId: service.id,
-                  thresholdHours: service.maxHours ?? service.minHours,
-                  triggeredByUserId: actor.sub,
-                  previousValue,
-                  currentValue: equipment.hourMeter,
-                },
-              },
+              include: { pmService: true, maintenanceRecord: true },
+            });
+            created.push(ticket);
+          }
+          const recipients = await tx.user.findMany({
+            where: {
+              status: 'ACTIVE',
+              deletedAt: null,
+              role: { in: [Role.SUPER_ADMIN, Role.MANAGER, Role.BIMAN_ADMIN] },
             },
-            include: { pmService: true, maintenanceRecord: true },
+            select: { id: true },
           });
-          created.push(ticket);
-        }
-        const recipients = await tx.user.findMany({
-          where: {
-            status: 'ACTIVE',
-            deletedAt: null,
-            role: { in: [Role.SUPER_ADMIN, Role.MANAGER, Role.BIMAN_ADMIN] },
-          },
-          select: { id: true },
-        });
-        const notifications = await tx.appNotification.createManyAndReturn({
-          data: serviceTicketNotificationData(
+          const notifications = await tx.appNotification.createManyAndReturn({
+            data: serviceTicketNotificationData(
+              created,
+              recipients,
+              equipment.assetNo,
+            ),
+          });
+          await tx.equipment.update({
+            where: { id },
+            data: { lastServiceCheckAt: new Date() },
+          });
+          return {
             created,
-            recipients,
-            equipment.assetNo,
-          ),
-        });
-        await tx.equipment.update({
-          where: { id },
-          data: { lastServiceCheckAt: new Date() },
-        });
-        return {
-          created,
-          previousValue,
-          currentValue: equipment.hourMeter,
-          notifications,
-        };
-      });
+            previousValue,
+            currentValue: equipment.hourMeter,
+            notifications,
+          };
+        },
+        { timeout: 20_000 },
+      );
       await this.notificationPublisher.dispatch(result.notifications);
       return {
         created: result.created.map(serializeTicket),

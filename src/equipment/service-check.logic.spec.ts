@@ -1,6 +1,7 @@
 import { NotificationEntity } from '@prisma/client';
 import {
   crossedHourBands,
+  initialHourBands,
   serviceTicketNotificationData,
 } from './service-check.logic';
 
@@ -35,6 +36,45 @@ describe('crossedHourBands', () => {
         (item) => item.id,
       ),
     ).toEqual(['f', 'custom']);
+  });
+
+  it('initialHourBands returns every unchecked band the meter has entered', () => {
+    expect(
+      initialHourBands(services, 600, new Set(['f:500'])).map((i) => i.id),
+    ).toEqual(['b']);
+    expect(initialHourBands(services, 500, new Set()).map((i) => i.id)).toEqual(
+      ['f', 'b'],
+    );
+  });
+
+  it('initialHourBands creates every band up to the cycle end when bands are skipped', () => {
+    const full = [
+      { id: 'f', minHours: 0, maxHours: 500 },
+      { id: 'b', minHours: 500, maxHours: 1000 },
+      { id: 'e', minHours: 2000, maxHours: 2500 },
+    ];
+    expect(initialHourBands(full, 2500, new Set()).map((i) => i.id)).toEqual([
+      'f',
+      'b',
+      'e',
+    ]);
+    expect(
+      initialHourBands(full, 2500, new Set(['f:500', 'b:1000'])).map(
+        (i) => i.id,
+      ),
+    ).toEqual(['e']);
+  });
+
+  it('initialHourBands allows the same band again once the full cycle is complete', () => {
+    const full = [
+      { id: 'f', minHours: 0, maxHours: 500 },
+      { id: 'e', minHours: 500, maxHours: 1000 },
+    ];
+    const done = new Set(['f:500', 'e:1000']);
+    expect(initialHourBands(full, 1000, done)).toEqual([]);
+    expect(initialHourBands(full, 1200, done)).toEqual([
+      { id: 'f', minHours: 0, maxHours: 500, threshold: 1500 },
+    ]);
   });
 
   it('creates one ticket-linked notification per generated ticket and recipient', () => {

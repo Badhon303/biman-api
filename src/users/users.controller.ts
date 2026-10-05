@@ -65,6 +65,24 @@ export class UsersController {
     return this.users.create(dto);
   }
 
+  @Get('archive')
+  @Roles('Super Admin')
+  archive() {
+    return this.users.archive();
+  }
+
+  @Post(':id/restore')
+  @Roles('Super Admin')
+  restore(@Param('id') id: string) {
+    return this.users.restore(id);
+  }
+
+  @Delete(':id/permanent')
+  @Roles('Super Admin')
+  permanentlyRemove(@Param('id') id: string) {
+    return this.users.permanentlyRemove(id);
+  }
+
   @Get(':id')
   @Roles('Super Admin')
   get(@Param('id') id: string) {

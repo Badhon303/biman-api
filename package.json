@@ -22,6 +22,7 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "db:seed:tickets": "ts-node prisma/seed-tickets.ts",
+    "db:backfill:checklists": "ts-node prisma/backfill-checklist-defaults.ts",
     "db:studio": "prisma studio",
     "test": "jest",
     "test:watch": "jest --watch",

@@ -681,9 +681,9 @@ export function checklistCatalogFor(
 export const toChecklistItems = (templates: ChecklistTemplate[]) =>
   templates
     .filter(({ enabled = true }) => enabled)
-    .map(({ category, label, sortOrder, applicable = true }) => ({
+    .map(({ category, label, sortOrder }) => ({
       category,
       label,
       sortOrder,
-      applicable,
+      applicable: true,
     }));

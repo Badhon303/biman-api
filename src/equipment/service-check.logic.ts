@@ -23,6 +23,34 @@ export function crossedHourBands<T extends HourBand>(
   });
 }
 
+export function initialHourBands<T extends HourBand>(
+  services: T[],
+  currentValue: number,
+  checkedKeys: Set<string>,
+) {
+  const bandEnd = (service: T) => service.maxHours ?? service.minHours;
+  const cycleLength = Math.max(0, ...services.map((s) => bandEnd(s) ?? 0));
+  const cycle =
+    cycleLength > 0 && currentValue > cycleLength
+      ? Math.ceil(currentValue / cycleLength) - 1
+      : 0;
+  const offset = cycle * cycleLength;
+  return services
+    .filter((service) => {
+      const end = bandEnd(service);
+      return (
+        end !== null &&
+        end !== undefined &&
+        (service.minHours ?? 0) + offset <= currentValue &&
+        !checkedKeys.has(`${service.id}:${end + offset}`)
+      );
+    })
+    .map((service) => ({
+      ...service,
+      threshold: (bandEnd(service) as number) + offset,
+    }));
+}
+
 export function serviceTicketNotificationData(
   tickets: { id: string; ticketNo: string }[],
   recipients: { id: string }[],

@@ -80,6 +80,17 @@ describe('SchedulesService', () => {
     );
   });
 
+  it('lists active schedules newest-created first', async () => {
+    await schedules.list();
+
+    expect(scheduleModel.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+      }),
+    );
+  });
+
   it('lists only archived schedules in the archive view', async () => {
     await schedules.archive();
 
