@@ -1,4 +1,4 @@
-import { IsInt, IsString, Min, MinLength } from 'class-validator';
+import { IsInt, IsOptional, IsString, Min, MinLength } from 'class-validator';
 
 export class CreateRequestDto {
   @IsString()
@@ -12,9 +12,15 @@ export class CreateRequestDto {
   @Min(1)
   quantity: number;
 
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  partNumber?: number;
+
+  @IsOptional()
   @IsString()
   @MinLength(2)
-  reason: string;
+  reason?: string;
 }
 
 export class RejectRequestDto {

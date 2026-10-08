@@ -93,8 +93,11 @@ export class RequestsService {
           ticketId: dto.ticketId,
           equipmentId: ticket.equipment.id,
           item: dto.item,
+          ...(dto.partNumber !== undefined
+            ? { partNumber: dto.partNumber }
+            : {}),
           quantity: dto.quantity,
-          reason: dto.reason,
+          ...(dto.reason?.trim() ? { reason: dto.reason.trim() } : {}),
           requestedById: actor.sub,
         },
         include: this.includeRequest(),

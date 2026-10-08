@@ -186,6 +186,7 @@ model Equipment {
   engineSerialNo     String?                  @map("engine_serial_no")
   bimanSerialNo      String?                  @map("biman_serial_no")
   tldSerialNo        String?                  @map("tld_serial_no")
+  tireSize           String?                  @map("tire_size")
   location           String
   status             EquipmentStatus          @default(AVAILABLE)
   hourMeter          Float                    @default(0) @map("hour_meter")
@@ -411,8 +412,9 @@ model EquipmentRequest {
   ticketId      String        @map("ticket_id") @db.Uuid
   equipmentId   String        @map("equipment_id") @db.Uuid
   item          String
+  partNumber    Int?          @map("part_number")
   quantity      Int
-  reason        String        @db.Text
+  reason        String?       @db.Text
   status        RequestStatus @default(PENDING)
   requestedById String        @map("requested_by_user_id") @db.Uuid
   approvedById  String?       @map("approved_by_user_id") @db.Uuid

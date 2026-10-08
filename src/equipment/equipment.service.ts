@@ -134,6 +134,7 @@ export class EquipmentService {
         engineSerialNo: dto.engineSerialNo,
         bimanSerialNo: dto.bimanSerialNo,
         tldSerialNo: dto.tldSerialNo,
+        tireSize: dto.tireSize,
         status: equipmentStatus[dto.status ?? 'Available'],
         hourMeter: dto.hourMeter ?? 0,
         actualGtDate: dto.actualGtDate ? new Date(dto.actualGtDate) : undefined,

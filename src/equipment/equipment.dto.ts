@@ -50,6 +50,10 @@ export class CreateEquipmentDto {
   tldSerialNo?: string;
 
   @IsOptional()
+  @IsString()
+  tireSize?: string;
+
+  @IsOptional()
   @IsIn(['Available', 'Under Maintenance', 'Out of Service', 'Inactive'])
   status?: string;
 
@@ -117,6 +121,10 @@ export class UpdateEquipmentDto {
   @IsOptional()
   @IsString()
   tldSerialNo?: string;
+
+  @IsOptional()
+  @IsString()
+  tireSize?: string;
 
   @IsOptional()
   @IsIn(['Available', 'Under Maintenance', 'Out of Service', 'Inactive'])

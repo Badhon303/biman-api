@@ -73,15 +73,15 @@ All routes are under `/api`. Login, refresh, and health are public; other routes
 |---|---|
 | Health | `GET /health` |
 | Auth | `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/password` |
-| Users | `/users/me`, `/users/me/password`, `/users`, `/users/engineers`, `/users/:id` and the documented status/password/reset subroutes |
-| Equipment types | `/equipment-types` and `/equipment-types/:id` |
-| Equipment | `/equipment`, `/equipment/:id`, `/equipment/:id/hour-meter`, `/equipment/:id/hour-meter/service-check` |
-| Tickets | `/tickets`, `/tickets/:id`, and assignment, maintenance, checklist, feedback, submit, verify-close, and return subroutes |
-| Requests | `/requests` and `/:id/approve`, `/:id/reject`, `/:id/receive` |
-| Schedules | `/maintenance-schedules` |
-| Notifications | `/notifications`, `/notifications/stream`, `/:id/read`, `/read-all` |
-| Reports | `/reports/summary` |
-| Files | `/files/images`, `/files/documents`, `/files/:id/attach`, `/files/:id`, `/files/:id/thumbnail`, `/files/usage` |
+| Users | `GET /users/me`, `PATCH /users/me/password`, `GET /users`, `GET /users/engineers`, `POST /users`, `GET/PATCH/DELETE /users/:id`, `PATCH /users/:id/status`, `PATCH /users/:id/password`, `POST /users/:id/reset-password`; archive: `GET /users/archive`, `POST /users/:id/restore`, `DELETE /users/:id/permanent` (Super Admin only) |
+| Equipment types | `GET/POST /equipment-types`, `GET/PUT/DELETE /equipment-types/:id`, `GET /equipment-types/checklists`; archive: `GET /equipment-types/archive`, `POST /equipment-types/:id/restore`, `DELETE /equipment-types/:id/permanent` |
+| Equipment | `GET/POST /equipment`, `GET/PUT/DELETE /equipment/:id`, `POST /equipment/:id/hour-meter`, `POST /equipment/:id/hour-meter/service-check`; archive: `GET /equipment/archive`, `POST /equipment/:id/restore`, `DELETE /equipment/:id/permanent` |
+| Tickets | `GET/POST /tickets`, `GET/PATCH/DELETE /tickets/:id`, `POST /tickets/:id/assign`, `POST /tickets/:id/start`, `PATCH /tickets/:id/maintenance`, `PATCH /tickets/:id/checklist/:itemId`, `POST /tickets/:id/feedback`, `POST /tickets/:id/submit`, `POST /tickets/:id/verify-close`, `POST /tickets/:id/return`; archive: `GET /tickets/archive`, `POST /tickets/:id/restore`, `DELETE /tickets/:id/permanent` |
+| Requests | `GET/POST /requests`, `POST /requests/:id/approve`, `POST /requests/:id/reject`, `POST /requests/:id/receive` |
+| Schedules | `GET/POST /maintenance-schedules`, `DELETE /maintenance-schedules/:id`; archive: `GET /maintenance-schedules/archive`, `POST /maintenance-schedules/:id/restore`, `DELETE /maintenance-schedules/:id/permanent` |
+| Notifications | `GET /notifications`, `GET /notifications/stream` (SSE), `PATCH /notifications/:id/read`, `PATCH /notifications/read-all` |
+| Reports | `GET /reports/summary` |
+| Files | `POST /files/images`, `POST /files/documents`, `POST /files/:id/attach`, `DELETE /files/:id`, `GET /files/:id`, `GET /files/:id/thumbnail`, `GET /files/usage` (Super Admin only) |
 
 See `/api/docs` for HTTP methods, request DTOs, permissions, and response schemas. Paginated endpoints generally accept `page` (default 1), `limit` (default 20, maximum 100), `search`, and `order` (`asc`/`desc`); supported filters vary by endpoint.
 
@@ -90,6 +90,7 @@ See `/api/docs` for HTTP methods, request DTOs, permissions, and response schema
 - Equipment meter updates accept only a value strictly greater than the current reading and append a history row. Updating the meter does not itself create a PM ticket; service-check is an explicit action.
 - Manual tickets are Breakdown, General, or Washing. PM tickets use the hour-meter service-check or V-Service schedule workflows.
 - V-Service schedules are checked by a ten-minute cron task. Notifications are persisted, dispatched through BullMQ/Redis, and streamed to each authenticated user over SSE.
+- Archive operations soft-delete records and expose restore/permanent-delete actions for tickets, schedules, equipment, and equipment types to Super Admins and Managers. The Users archive, restore, and permanent-delete operations are Super Admin-only. Restore order is equipment type before equipment, and equipment before its tickets or schedules; restoring a user also reactivates the account. Permanent deletion of a schedule does not remove a generated ticket, and a user referenced by historical or operational records cannot be permanently deleted.
 - **Known defect:** service-check currently expects `dueDateByServiceId` to be a JSON object keyed by service ID, but the DTO validates the field as a string. The documented object payload is therefore rejected by request validation (HTTP 400). See `../docs/BACKEND_SPEC.md` and `../docs/UAT_CHECKLIST.md` for impact and the recorded UAT results.
 - **User-status note:** the admin UI uses `PATCH /users/:id/status` to deactivate accounts; this route revokes refresh tokens. The Super Admin `PATCH /users/:id` DTO also permits direct API status changes but does not revoke refresh tokens, so that alternate route needs coverage/fixing.
 - See the backend specification and UAT checklist for role behavior, current implementation details, and remaining verification gaps.
