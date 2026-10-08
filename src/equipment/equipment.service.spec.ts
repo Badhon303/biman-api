@@ -14,6 +14,7 @@ jest.mock('../maintenance-schedules/schedules.service', () => ({
 }));
 jest.mock('../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
+import { Prisma } from '@prisma/client';
 import { EquipmentService } from './equipment.service';
 import { NotificationPublisher } from '../notifications/notification-publisher.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -39,6 +40,7 @@ describe('EquipmentService.create', () => {
   let equipmentService: EquipmentService;
   let serviceCheck: jest.SpyInstance;
   let equipmentCreate: jest.Mock;
+  let equipmentFindMany: jest.Mock;
   let equipmentTypeService: { findMany: jest.Mock };
   let schedules: { ensureInitialSchedule: jest.Mock };
 
@@ -55,9 +57,10 @@ describe('EquipmentService.create', () => {
         .mockResolvedValue({ ticketCreated: false, scheduleCreated: true }),
     };
     equipmentCreate = jest.fn().mockResolvedValue(item);
+    equipmentFindMany = jest.fn().mockResolvedValue([]);
     const prisma = {
       equipment: {
-        count: jest.fn().mockResolvedValue(0),
+        findMany: equipmentFindMany,
         create: equipmentCreate,
       },
       equipmentTypeService,
@@ -91,6 +94,7 @@ describe('EquipmentService.create', () => {
     expect(equipmentCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
+          assetNo: 'BGM-001',
           rearTireSize: '12.00-20',
           frontTireSize: '10.00-20',
         }),
@@ -111,5 +115,45 @@ describe('EquipmentService.create', () => {
       serviceTicketsCreated: 1,
       vServiceScheduleCreated: true,
     });
+  });
+
+  it('uses the highest existing BGM asset number instead of the equipment count', async () => {
+    equipmentFindMany.mockResolvedValue([
+      { assetNo: 'BGM-001' },
+      { assetNo: 'BGM-005' },
+    ]);
+
+    await equipmentService.create(
+      { equipmentTypeId: 'type-1' } as CreateEquipmentDto,
+      actor,
+    );
+
+    expect(equipmentCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ assetNo: 'BGM-006' }),
+      }),
+    );
+  });
+
+  it('retries with the next number if another create takes the candidate concurrently', async () => {
+    const duplicateAssetNo = new Prisma.PrismaClientKnownRequestError(
+      'Unique constraint failed on asset_no',
+      { code: 'P2002', clientVersion: 'test', meta: { target: ['asset_no'] } },
+    );
+    equipmentCreate
+      .mockRejectedValueOnce(duplicateAssetNo)
+      .mockResolvedValueOnce(item);
+    equipmentFindMany
+      .mockResolvedValueOnce([{ assetNo: 'BGM-001' }])
+      .mockResolvedValueOnce([{ assetNo: 'BGM-001' }, { assetNo: 'BGM-002' }]);
+
+    await equipmentService.create(
+      { equipmentTypeId: 'type-1' } as CreateEquipmentDto,
+      actor,
+    );
+
+    expect(
+      equipmentCreate.mock.calls.map(([args]) => args.data.assetNo),
+    ).toEqual(['BGM-002', 'BGM-003']);
   });
 });

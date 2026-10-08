@@ -122,44 +122,89 @@ export class EquipmentService {
   }
 
   async create(dto: CreateEquipmentDto, actor: AuthUser) {
-    const count = await this.prisma.equipment.count();
-    const item = await this.prisma.equipment.create({
-      data: {
-        assetNo: `BGM-${String(count + 1).padStart(3, '0')}`,
-        equipmentTypeId: dto.equipmentTypeId,
-        manufacturer: dto.manufacturer,
-        model: dto.model,
-        location: dto.location,
-        engineModel: dto.engineModel,
-        engineSerialNo: dto.engineSerialNo,
-        bimanSerialNo: dto.bimanSerialNo,
-        tldSerialNo: dto.tldSerialNo,
-        rearTireSize: dto.rearTireSize,
-        frontTireSize: dto.frontTireSize,
-        status: equipmentStatus[dto.status ?? 'Available'],
-        hourMeter: dto.hourMeter ?? 0,
-        actualGtDate: dto.actualGtDate ? new Date(dto.actualGtDate) : undefined,
-        lastVServiceDate: dto.lastVServiceDate
-          ? new Date(dto.lastVServiceDate)
-          : undefined,
-        shipDate: dto.shipDate ? new Date(dto.shipDate) : undefined,
-        shippingStatus: dto.shippingStatus,
-        emissionRating: dto.emissionRating,
-        specifications: dto.specifications
-          ? { create: dto.specifications }
-          : undefined,
-        hourMeterReadings:
-          dto.hourMeter && dto.hourMeter > 0
-            ? {
-                create: {
-                  value: dto.hourMeter,
-                  recordedByUserId: actor.sub,
-                },
-              }
+    const getNextAssetNo = async () => {
+      const equipment = await this.prisma.equipment.findMany({
+        where: { assetNo: { startsWith: 'BGM-' } },
+        select: { assetNo: true },
+      });
+      const highestNumber = equipment.reduce((highest, { assetNo }) => {
+        const match = /^BGM-(\d+)$/.exec(assetNo);
+        return match ? Math.max(highest, Number(match[1])) : highest;
+      }, 0);
+      return `BGM-${String(highestNumber + 1).padStart(3, '0')}`;
+    };
+    const createEquipment = (assetNo: string) =>
+      this.prisma.equipment.create({
+        data: {
+          assetNo,
+          equipmentTypeId: dto.equipmentTypeId,
+          manufacturer: dto.manufacturer,
+          model: dto.model,
+          location: dto.location,
+          engineModel: dto.engineModel,
+          engineSerialNo: dto.engineSerialNo,
+          bimanSerialNo: dto.bimanSerialNo,
+          tldSerialNo: dto.tldSerialNo,
+          rearTireSize: dto.rearTireSize,
+          frontTireSize: dto.frontTireSize,
+          status: equipmentStatus[dto.status ?? 'Available'],
+          hourMeter: dto.hourMeter ?? 0,
+          actualGtDate: dto.actualGtDate
+            ? new Date(dto.actualGtDate)
             : undefined,
-      },
-      include: this.includeEquipment(),
-    });
+          lastVServiceDate: dto.lastVServiceDate
+            ? new Date(dto.lastVServiceDate)
+            : undefined,
+          shipDate: dto.shipDate ? new Date(dto.shipDate) : undefined,
+          shippingStatus: dto.shippingStatus,
+          emissionRating: dto.emissionRating,
+          specifications: dto.specifications
+            ? { create: dto.specifications }
+            : undefined,
+          hourMeterReadings:
+            dto.hourMeter && dto.hourMeter > 0
+              ? {
+                  create: {
+                    value: dto.hourMeter,
+                    recordedByUserId: actor.sub,
+                  },
+                }
+              : undefined,
+        },
+        include: this.includeEquipment(),
+      });
+
+    let item: Awaited<ReturnType<typeof createEquipment>> | undefined;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        item = await createEquipment(await getNextAssetNo());
+        break;
+      } catch (error) {
+        const target =
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+            ? error.meta?.target
+            : undefined;
+        const targetText = Array.isArray(target)
+          ? target.join(',')
+          : String(target ?? '');
+        if (
+          !targetText.includes('asset_no') &&
+          !targetText.includes('assetNo')
+        ) {
+          throw error;
+        }
+        if (attempt === 4) {
+          throw new ConflictException(
+            'Could not allocate an equipment asset number. Please retry.',
+          );
+        }
+      }
+    }
+    if (!item)
+      throw new ConflictException(
+        'Unable to allocate an equipment asset number.',
+      );
     const vService = item.lastVServiceDate
       ? await this.schedules.ensureInitialSchedule(item.id)
       : { ticketCreated: false, scheduleCreated: false };
