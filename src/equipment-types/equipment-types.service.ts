@@ -6,11 +6,8 @@ import {
 import { Prisma, ServiceKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { serviceKindFromName } from '../common/enum-mappers';
-import {
-  applyChecklistSettings,
-  checklistCatalogFor,
-  ChecklistTemplate,
-} from '../common/fixed-checklists';
+import { loadChecklistCatalog } from '../common/checklist-catalog';
+import { applyChecklistSettings } from '../common/checklist-templates';
 import {
   CreateEquipmentTypeDto,
   UpdateEquipmentTypeDto,
@@ -47,29 +44,24 @@ export class EquipmentTypesService {
       },
     });
     if (!item) throw new NotFoundException('Equipment type not found.');
+    const catalog = await loadChecklistCatalog(this.prisma);
     return {
       ...item,
       services: item.services.map((service) => ({
         ...service,
-        checklistItems: this.checklistSettingsFor(
-          service.kind,
-          service.checklistItems,
-        ),
+        checklistItems: applyChecklistSettings(catalog, service.checklistItems),
       })),
     };
   }
 
-  checklistCatalog() {
-    return Object.fromEntries(
-      Object.values(ServiceKind).map((kind) => [
-        kind,
-        this.checklistSettingsFor(kind, []),
-      ]),
+  async checklistCatalog() {
+    const catalog = applyChecklistSettings(
+      await loadChecklistCatalog(this.prisma),
+      [],
     );
-  }
-
-  private checklistSettingsFor(kind: ServiceKind, saved: ChecklistTemplate[]) {
-    return applyChecklistSettings(checklistCatalogFor(kind), saved);
+    return Object.fromEntries(
+      Object.values(ServiceKind).map((kind) => [kind, catalog]),
+    );
   }
 
   async create(dto: CreateEquipmentTypeDto) {

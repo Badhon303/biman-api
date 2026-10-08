@@ -51,7 +51,11 @@ export class CreateEquipmentDto {
 
   @IsOptional()
   @IsString()
-  tireSize?: string;
+  rearTireSize?: string;
+
+  @IsOptional()
+  @IsString()
+  frontTireSize?: string;
 
   @IsOptional()
   @IsIn(['Available', 'Under Maintenance', 'Out of Service', 'Inactive'])
@@ -124,7 +128,11 @@ export class UpdateEquipmentDto {
 
   @IsOptional()
   @IsString()
-  tireSize?: string;
+  rearTireSize?: string;
+
+  @IsOptional()
+  @IsString()
+  frontTireSize?: string;
 
   @IsOptional()
   @IsIn(['Available', 'Under Maintenance', 'Out of Service', 'Inactive'])

@@ -14,6 +14,7 @@ import {
 import { RolesGuard } from './common/roles.guard';
 import { EquipmentTypesModule } from './equipment-types/equipment-types.module';
 import { EquipmentModule } from './equipment/equipment.module';
+import { InspectionChecklistsModule } from './inspection-checklists/inspection-checklists.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ReportsModule } from './reports/reports.module';
@@ -53,6 +54,7 @@ const redisConnection = (rawUrl: string) => {
     UsersModule,
     EquipmentTypesModule,
     EquipmentModule,
+    InspectionChecklistsModule,
     TicketsModule,
     RequestsModule,
     NotificationsModule,

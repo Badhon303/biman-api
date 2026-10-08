@@ -10,15 +10,22 @@ import {
   TicketType,
   UserStatus,
 } from '@prisma/client';
-import {
-  FIXED_CHECKLIST_EQUIPMENT_TYPES,
-  fixedChecklistFor,
-} from '../src/common/fixed-checklists';
+import { loadChecklistCatalog } from '../src/common/checklist-catalog';
+import { ChecklistTemplate } from '../src/common/checklist-templates';
 import { ticketTypeLabel } from '../src/common/api-serializers';
 
 // Dummy tickets for development/UAT. Idempotent: existing DMY-* records are
 // left untouched. Run with `pnpm run db:seed:tickets`.
 const prisma = new PrismaClient();
+const FIXED_CHECKLIST_EQUIPMENT_TYPES = [
+  'Push Back',
+  'Belt Loader',
+  'ACU',
+  'GPU',
+  'CPT TF-7',
+  'Passenger Steps',
+] as const;
+let checklistCatalog: ChecklistTemplate[] = [];
 const DAY = 24 * 60 * 60 * 1000;
 const daysAgo = (days: number) => new Date(Date.now() - days * DAY);
 
@@ -163,6 +170,7 @@ const reached = (status: TicketStatus, stage: TicketStatus) =>
   statusCycle.indexOf(status) >= statusCycle.indexOf(stage);
 
 async function main() {
+  checklistCatalog = await loadChecklistCatalog(prisma);
   if (process.env.NODE_ENV === 'production')
     throw new Error('Dummy ticket seeding is disabled in production.');
 
@@ -265,7 +273,7 @@ async function main() {
     fault?: string;
     party?: string;
     pmServiceId?: string;
-    checklist: ReturnType<typeof fixedChecklistFor>;
+    checklist: ChecklistTemplate[] | null;
   }) => {
     const index = counter++;
     const ticketNo = `DMY-TKT-${String(index + 1).padStart(3, '0')}`;
@@ -428,7 +436,7 @@ async function main() {
         unit,
         fault: `${service.name} preventive maintenance — ${service.months ? `${service.months}-month visual check` : `${service.maxHours} hour service`}`,
         pmServiceId: serviceIds.get(`${typeName}:${service.kind}`),
-        checklist: fixedChecklistFor(typeName, service.kind),
+        checklist: checklistCatalog,
       });
     }
   }

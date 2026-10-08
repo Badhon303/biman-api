@@ -17,9 +17,9 @@ import { CreateScheduleDto } from './schedules.dto';
 import { scheduleStatusLabel } from '../common/api-serializers';
 import {
   applyChecklistSettings,
-  checklistCatalogFor,
   toChecklistItems,
-} from '../common/fixed-checklists';
+} from '../common/checklist-templates';
+import { loadChecklistCatalog } from '../common/checklist-catalog';
 import {
   addMonthsClamped,
   isScheduleDue,
@@ -290,7 +290,7 @@ export class SchedulesService {
         });
         if (!current) return { notifications: [], ticketCreated: false };
         const templates = applyChecklistSettings(
-          checklistCatalogFor(ServiceKind.V_SERVICE),
+          await loadChecklistCatalog(tx),
           vService.checklistItems,
         );
         const systemActorId = await this.systemActorId(tx);

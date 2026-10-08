@@ -24,9 +24,9 @@ import {
 } from './service-check.logic';
 import {
   applyChecklistSettings,
-  checklistCatalogFor,
   toChecklistItems,
-} from '../common/fixed-checklists';
+} from '../common/checklist-templates';
+import { loadChecklistCatalog } from '../common/checklist-catalog';
 import { PaginationDto } from '../common/pagination.dto';
 import {
   equipmentStatusLabel,
@@ -134,7 +134,8 @@ export class EquipmentService {
         engineSerialNo: dto.engineSerialNo,
         bimanSerialNo: dto.bimanSerialNo,
         tldSerialNo: dto.tldSerialNo,
-        tireSize: dto.tireSize,
+        rearTireSize: dto.rearTireSize,
+        frontTireSize: dto.frontTireSize,
         status: equipmentStatus[dto.status ?? 'Available'],
         hourMeter: dto.hourMeter ?? 0,
         actualGtDate: dto.actualGtDate ? new Date(dto.actualGtDate) : undefined,
@@ -452,7 +453,7 @@ export class EquipmentService {
               .toString()
               .padStart(4, '0')}`;
             const templates = applyChecklistSettings(
-              checklistCatalogFor(service.kind),
+              await loadChecklistCatalog(tx),
               service.checklistItems,
             );
             const ticket = await tx.ticket.create({

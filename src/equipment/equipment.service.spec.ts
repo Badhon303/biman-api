@@ -38,6 +38,7 @@ describe('EquipmentService.create', () => {
   };
   let equipmentService: EquipmentService;
   let serviceCheck: jest.SpyInstance;
+  let equipmentCreate: jest.Mock;
   let equipmentTypeService: { findMany: jest.Mock };
   let schedules: { ensureInitialSchedule: jest.Mock };
 
@@ -53,10 +54,11 @@ describe('EquipmentService.create', () => {
         .fn()
         .mockResolvedValue({ ticketCreated: false, scheduleCreated: true }),
     };
+    equipmentCreate = jest.fn().mockResolvedValue(item);
     const prisma = {
       equipment: {
         count: jest.fn().mockResolvedValue(0),
-        create: jest.fn().mockResolvedValue(item),
+        create: equipmentCreate,
       },
       equipmentTypeService,
     };
@@ -79,11 +81,21 @@ describe('EquipmentService.create', () => {
     const result = await equipmentService.create(
       {
         equipmentTypeId: 'type-1',
+        rearTireSize: '12.00-20',
+        frontTireSize: '10.00-20',
         lastVServiceDate: '2026-01-01',
       } as CreateEquipmentDto,
       actor,
     );
 
+    expect(equipmentCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          rearTireSize: '12.00-20',
+          frontTireSize: '10.00-20',
+        }),
+      }),
+    );
     expect(serviceCheck).toHaveBeenCalledWith(
       'equipment-1',
       {
