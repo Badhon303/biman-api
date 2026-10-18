@@ -82,7 +82,10 @@ export class TicketsService {
               { ticketNo: { contains: query.search, mode: 'insensitive' } },
               {
                 equipment: {
-                  bimanSerialNo: { contains: query.search, mode: 'insensitive' },
+                  bimanSerialNo: {
+                    contains: query.search,
+                    mode: 'insensitive',
+                  },
                 },
               },
               {
