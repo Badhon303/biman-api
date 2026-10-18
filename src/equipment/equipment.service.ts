@@ -75,8 +75,10 @@ export class EquipmentService {
         ? {
             OR: [
               { assetNo: { contains: query.search, mode: 'insensitive' } },
-              { manufacturer: { contains: query.search, mode: 'insensitive' } },
-              { model: { contains: query.search, mode: 'insensitive' } },
+              {
+                bimanSerialNo: { contains: query.search, mode: 'insensitive' },
+              },
+              { tldSerialNo: { contains: query.search, mode: 'insensitive' } },
             ],
           }
         : {}),

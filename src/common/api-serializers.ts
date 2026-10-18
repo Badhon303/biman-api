@@ -81,6 +81,8 @@ export function serializeTicket(ticket: any) {
           id: equipment.id,
           assetNo: equipment.assetNo,
           model: equipment.model,
+          bimanSerialNo: equipment.bimanSerialNo,
+          tldSerialNo: equipment.tldSerialNo,
           equipmentType:
             typeof equipment.equipmentType === 'string'
               ? equipment.equipmentType

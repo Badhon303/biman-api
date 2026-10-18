@@ -82,7 +82,12 @@ export class TicketsService {
               { ticketNo: { contains: query.search, mode: 'insensitive' } },
               {
                 equipment: {
-                  assetNo: { contains: query.search, mode: 'insensitive' },
+                  bimanSerialNo: { contains: query.search, mode: 'insensitive' },
+                },
+              },
+              {
+                equipment: {
+                  tldSerialNo: { contains: query.search, mode: 'insensitive' },
                 },
               },
             ],
@@ -572,6 +577,8 @@ export class TicketsService {
           id: true,
           assetNo: true,
           model: true,
+          bimanSerialNo: true,
+          tldSerialNo: true,
           equipmentType: { select: { name: true } },
         },
       },
@@ -589,6 +596,8 @@ export class TicketsService {
           id: true,
           assetNo: true,
           model: true,
+          bimanSerialNo: true,
+          tldSerialNo: true,
           equipmentType: { select: { name: true } },
         },
       },
