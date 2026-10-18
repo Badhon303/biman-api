@@ -32,24 +32,28 @@ async function bootstrap() {
     }),
   );
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Biman GSE Digital Logbook API')
-    .setDescription(
-      'API for equipment, maintenance tickets, schedules, requests, files, and notifications.',
-    )
-    .setVersion('1.0.0')
-    .addBearerAuth()
-    .build();
-  SwaggerModule.setup(
-    'api/docs',
-    app,
-    SwaggerModule.createDocument(app, swaggerConfig),
-  );
+  if (process.env.NODE_ENV !== 'production') {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Biman GSE Digital Logbook API')
+      .setDescription(
+        'API for equipment, maintenance tickets, schedules, requests, files, and notifications.',
+      )
+      .setVersion('1.0.0')
+      .addBearerAuth()
+      .build();
+    SwaggerModule.setup(
+      'api/docs',
+      app,
+      SwaggerModule.createDocument(app, swaggerConfig),
+    );
+  }
 
   const port = Number(process.env.PORT ?? 3001);
   await app.listen(port, '0.0.0.0');
   console.log(`API server running at http://localhost:${port}/api`);
-  console.log(`Swagger UI available at http://localhost:${port}/api/docs`);
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`Swagger UI available at http://localhost:${port}/api/docs`);
+  }
 }
 
 void bootstrap();
