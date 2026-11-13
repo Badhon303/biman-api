@@ -45,7 +45,7 @@ export class TicketsController {
   }
 
   @Post(':id/assign')
-  @Roles('Super Admin', 'Manager')
+  @Roles('Super Admin', 'Manager', 'Biman Admin')
   assign(
     @Param('id') id: string,
     @Body() dto: AssignTicketDto,
@@ -55,7 +55,7 @@ export class TicketsController {
   }
 
   @Patch(':id')
-  @Roles('Super Admin', 'Manager')
+  @Roles('Super Admin', 'Manager', 'Biman Admin')
   update(
     @Param('id') id: string,
     @Body() dto: UpdateTicketDto,

@@ -48,13 +48,13 @@ export class UsersController {
   }
 
   @Get()
-  @Roles('Super Admin', 'Manager')
+  @Roles('Super Admin', 'Manager', 'Biman Admin')
   list(@Query() query: PaginationDto) {
     return this.users.list(query);
   }
 
   @Get('engineers')
-  @Roles('Super Admin', 'Manager')
+  @Roles('Super Admin', 'Manager', 'Biman Admin')
   listEngineers(@Query() query: PaginationDto) {
     return this.users.listEngineers(query);
   }
