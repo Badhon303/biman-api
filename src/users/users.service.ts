@@ -79,7 +79,11 @@ export class UsersService {
       this.prisma.user.count({ where }),
     ]);
     return {
-      items: items.map(({ id, name }) => ({ id, name })),
+      items: items.map(({ id, name, organization }) => ({
+        id,
+        name,
+        organization: organization === 'BIMAN' ? 'Biman' : 'NGGL',
+      })),
       page,
       limit,
       total,

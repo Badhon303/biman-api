@@ -1,11 +1,21 @@
 import {
   EquipmentStatus,
+  Organization,
   RequestStatus,
+  Role as DbRole,
   ScheduleStatus,
   TicketPriority,
   TicketStatus,
   TicketType,
 } from '@prisma/client';
+
+const formatActorName = (user: any) => {
+  if (!user) return undefined;
+  if (user.role !== DbRole.ENGINEER) return user.name;
+  const organization =
+    user.organization === Organization.BIMAN ? 'Biman' : 'NGGL';
+  return `${user.name} (${organization})`;
+};
 
 export const equipmentStatusLabel: Record<EquipmentStatus, string> = {
   [EquipmentStatus.AVAILABLE]: 'Available',
@@ -90,7 +100,12 @@ export function serializeTicket(ticket: any) {
         }
       : undefined,
     assignedEngineer: assignedEngineer
-      ? { id: assignedEngineer.id, name: assignedEngineer.name }
+      ? {
+          id: assignedEngineer.id,
+          name: assignedEngineer.name,
+          organization:
+            assignedEngineer.organization === 'BIMAN' ? 'Biman' : 'NGGL',
+        }
       : undefined,
     createdBy: createdBy
       ? { id: createdBy.id, name: createdBy.name, email: createdBy.email }
@@ -113,7 +128,12 @@ export function serializeTicket(ticket: any) {
         id: entry.id,
         bodyHtml: entry.bodyHtml,
         createdAt: entry.createdAt,
-        author: entry.author,
+        author: entry.author
+          ? {
+              id: entry.author.id,
+              name: formatActorName(entry.author),
+            }
+          : undefined,
         images:
           entry.images?.map(({ fileAsset }: any) => ({
             id: fileAsset.id,
@@ -126,7 +146,7 @@ export function serializeTicket(ticket: any) {
         id: entry.id,
         label: entry.label,
         timestamp: entry.createdAt,
-        actor: entry.actor?.name,
+        actor: formatActorName(entry.actor),
         actorUserId: entry.actorId,
       })) ?? [],
     requests:

@@ -587,7 +587,7 @@ export class TicketsService {
       },
       pmService: { select: { name: true } },
       createdBy: { select: { id: true, name: true, email: true } },
-      assignedEngineer: { select: { id: true, name: true } },
+      assignedEngineer: { select: { id: true, name: true, organization: true } },
       maintenanceRecord: { select: { id: true, problemDescription: true } },
     };
   }
@@ -606,7 +606,7 @@ export class TicketsService {
       },
       pmService: true,
       createdBy: { select: { id: true, name: true, email: true } },
-      assignedEngineer: { select: { id: true, name: true } },
+      assignedEngineer: { select: { id: true, name: true, organization: true } },
       maintenanceRecord: {
         include: {
           checklistItems: { orderBy: { sortOrder: 'asc' } },
@@ -615,12 +615,18 @@ export class TicketsService {
       },
       history: {
         orderBy: { createdAt: 'asc' },
-        include: { actor: { select: { id: true, name: true } } },
+        include: {
+          actor: {
+            select: { id: true, name: true, role: true, organization: true },
+          },
+        },
       },
       feedback: {
         orderBy: { createdAt: 'asc' },
         include: {
-          author: { select: { id: true, name: true } },
+          author: {
+            select: { id: true, name: true, role: true, organization: true },
+          },
           images: { include: { fileAsset: { select: { id: true } } } },
         },
       },
